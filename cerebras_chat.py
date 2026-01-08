@@ -1043,9 +1043,15 @@ def main():
         # Process each prompt
         results = []
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Create output directory if it doesn't exist
-        os.makedirs("output", exist_ok=True)
-        output_dir = os.path.join("output", f"batch_output_{timestamp}")
+        
+        # Ensure all batch outputs are saved under the output directory
+        # Get absolute path to output directory to ensure consistency
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_base_dir = os.path.join(script_dir, "output")
+        os.makedirs(output_base_dir, exist_ok=True)
+        
+        # Create batch output directory under output/
+        output_dir = os.path.join(output_base_dir, f"batch_output_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
         
         for idx, prompt_data in enumerate(prompts_data, 1):
@@ -1320,11 +1326,15 @@ def main():
             
             # Save comprehensive outputs to files
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            # Create output directory if it doesn't exist
-            os.makedirs("output", exist_ok=True)
             
-            cerebras_file = os.path.join("output", f"cerebras_output_{timestamp}.txt")
-            google_file = os.path.join("output", f"google_output_{timestamp}.txt")
+            # Ensure all outputs are saved under the output directory
+            # Get absolute path to output directory to ensure consistency
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            output_base_dir = os.path.join(script_dir, "output")
+            os.makedirs(output_base_dir, exist_ok=True)
+            
+            cerebras_file = os.path.join(output_base_dir, f"cerebras_output_{timestamp}.txt")
+            google_file = os.path.join(output_base_dir, f"google_output_{timestamp}.txt")
             
             try:
                 # Save Cerebras output with all details

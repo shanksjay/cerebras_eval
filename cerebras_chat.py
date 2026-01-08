@@ -44,6 +44,12 @@ except ImportError:
     print("Error: 'requests' library not found. Install with: pip install requests")
     sys.exit(1)
 
+try:
+    import anthropic
+except ImportError:
+    print("Error: 'anthropic' library not found. Install with: pip install anthropic")
+    sys.exit(1)
+
 
 def call_cerebras_api(
     prompt: str,
@@ -186,9 +192,9 @@ def call_anthropic_api(
     temperature: float = 0.0,
     max_tokens: int = 4096,
     track_timing: bool = False,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, float]]]:
+) -> Tuple[Any, Optional[Dict[str, float]]]:
     """
-    Call Anthropic API for chat completions.
+    Call Anthropic Claude API for chat completions using anthropic library.
     
     Args:
         prompt: User prompt message
@@ -200,47 +206,57 @@ def call_anthropic_api(
         track_timing: Whether to track performance metrics
         
     Returns:
-        Tuple of (API response dictionary, performance metrics dictionary or None)
+        Tuple of (API response object, performance metrics dictionary or None)
     """
-    url = "https://api.anthropic.com/v1/messages"
-    
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-    }
-    
-    messages = [{"role": "user", "content": prompt}]
-    
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    
-    if system_message:
-        payload["system"] = system_message
-    
     performance_metrics = None
     
     try:
+        # Create client with API key
+        client = anthropic.Anthropic(api_key=api_key)
+        
         # Track timing
         if track_timing:
             request_start = time.time()
         
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()
+        # Build messages list
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Build API call parameters
+        api_params = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        
+        if system_message:
+            api_params["system"] = system_message
+        
+        if temperature > 0:
+            api_params["temperature"] = temperature
+        
+        # Generate content
+        response = client.messages.create(**api_params)
         
         if track_timing:
             request_end = time.time()
             total_time = request_end - request_start
             
             # Extract token usage from response
-            response_data = response.json()
-            usage = response_data.get("usage", {})
-            input_tokens = usage.get("input_tokens", 0)
-            output_tokens = usage.get("output_tokens", 0)
+            try:
+                if hasattr(response, 'usage'):
+                    usage = response.usage
+                    input_tokens = getattr(usage, 'input_tokens', 0)
+                    output_tokens = getattr(usage, 'output_tokens', 0)
+                    total_tokens = input_tokens + output_tokens
+                else:
+                    input_tokens = 0
+                    output_tokens = 0
+                    total_tokens = 0
+            except Exception:
+                # If we can't extract token usage, set to 0
+                input_tokens = 0
+                output_tokens = 0
+                total_tokens = 0
             
             # Calculate performance metrics
             ttft = total_time  # For non-streaming, TTFT is approximately the full latency
@@ -268,34 +284,46 @@ def call_anthropic_api(
                 "total_time_seconds": total_time,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
+                "total_tokens": total_tokens,
             }
             
-            return response_data, performance_metrics
+            return response, performance_metrics
         
-        return response.json(), None
+        return response, None
         
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         print(f"Error calling Anthropic API: {e}", file=sys.stderr)
-        if hasattr(e, 'response') and e.response is not None:
-            try:
-                error_detail = e.response.json()
-                print(f"API Error Details: {error_detail}", file=sys.stderr)
-            except:
-                print(f"Response: {e.response.text}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         raise
 
 
-def extract_anthropic_content(response: Dict[str, Any]) -> str:
-    """Extract content from Anthropic API response."""
+def extract_anthropic_content(response: Any) -> str:
+    """Extract content from Anthropic Claude API response object."""
     try:
-        content_blocks = response.get("content", [])
-        if content_blocks and len(content_blocks) > 0:
-            return content_blocks[0].get("text", "")
+        # Anthropic API returns content in response.content
+        if hasattr(response, 'content'):
+            # content is a list of content blocks
+            if isinstance(response.content, list) and len(response.content) > 0:
+                # Get the first content block
+                first_block = response.content[0]
+                if hasattr(first_block, 'text'):
+                    return first_block.text
+                elif isinstance(first_block, dict) and 'text' in first_block:
+                    return first_block['text']
+        # Fallback: try to access as dict
+        if isinstance(response, dict) and 'content' in response:
+            content = response['content']
+            if isinstance(content, list) and len(content) > 0:
+                first_block = content[0]
+                if isinstance(first_block, dict) and 'text' in first_block:
+                    return first_block['text']
         return ""
-    except (KeyError, IndexError) as e:
+    except (AttributeError, IndexError, KeyError) as e:
         print(f"Error extracting content from Anthropic response: {e}", file=sys.stderr)
-        print(f"Response structure: {response}", file=sys.stderr)
+        print(f"Response type: {type(response)}", file=sys.stderr)
+        if hasattr(response, '__dict__'):
+            print(f"Response attributes: {dir(response)}", file=sys.stderr)
         raise
 
 
@@ -314,7 +342,7 @@ def score_code(
     Args:
         code: The generated code to score
         prompt: The original prompt that generated the code
-        api_key: API key (Cerebras or Anthropic)
+        api_key: API key (Anthropic or Cerebras)
         model: Model name for scoring (default: claude-3-5-haiku-20241022)
         language: Programming language (default: python)
         track_timing: Whether to track performance metrics
@@ -374,12 +402,27 @@ Evaluate this code according to the rubric and provide scores in JSON format."""
         )
 
 
-def parse_score_response(response: Dict[str, Any], is_anthropic: bool = False) -> Dict[str, float]:
+def clean_json_response(raw_text: str) -> str:
+    """
+    Clean JSON response by removing markdown code blocks.
+    
+    Args:
+        raw_text: Raw text response that may contain markdown code blocks
+        
+    Returns:
+        Cleaned text with markdown code blocks removed
+    """
+    # Remove markdown code blocks (```json or ```)
+    clean_text = re.sub(r'```(?:json)?\n?|```', '', raw_text).strip()
+    return clean_text
+
+
+def parse_score_response(response: Any, is_anthropic: bool = True) -> Dict[str, float]:
     """
     Parse scoring response and extract scores.
     
     Args:
-        response: API response from scoring call
+        response: API response from scoring call (dict for Cerebras, object for Anthropic)
         is_anthropic: Whether the response is from Anthropic API
         
     Returns:
@@ -391,11 +434,30 @@ def parse_score_response(response: Dict[str, Any], is_anthropic: bool = False) -
         else:
             content = extract_content(response)
         
+        # Clean the content to remove markdown code blocks
+        cleaned_content = clean_json_response(content)
+        
         # Try to extract JSON from the response
-        # Look for JSON in the response
-        json_match = re.search(r'\{[^{}]*"correctness"[^{}]*\}', content, re.DOTALL)
+        # Look for JSON object in the response (handle multiline JSON)
+        json_match = re.search(r'\{.*?"correctness".*?\}', cleaned_content, re.DOTALL)
         if json_match:
-            score_data = json.loads(json_match.group())
+            try:
+                score_data = json.loads(json_match.group())
+                return {
+                    "correctness": float(score_data.get("correctness", 0.0)),
+                    "code_quality": float(score_data.get("code_quality", 0.0)),
+                    "efficiency": float(score_data.get("efficiency", 0.0)),
+                    "documentation": float(score_data.get("documentation", 0.0)),
+                    "total_score": float(score_data.get("total_score", 0.0)),
+                    "feedback": score_data.get("feedback", "No feedback provided"),
+                }
+            except json.JSONDecodeError:
+                # If the matched JSON is incomplete, try parsing the cleaned content directly
+                pass
+        
+        # Fallback: try to parse the entire cleaned content as JSON
+        try:
+            score_data = json.loads(cleaned_content)
             return {
                 "correctness": float(score_data.get("correctness", 0.0)),
                 "code_quality": float(score_data.get("code_quality", 0.0)),
@@ -404,20 +466,32 @@ def parse_score_response(response: Dict[str, Any], is_anthropic: bool = False) -
                 "total_score": float(score_data.get("total_score", 0.0)),
                 "feedback": score_data.get("feedback", "No feedback provided"),
             }
-        else:
-            # Fallback: try to parse the entire content as JSON
-            score_data = json.loads(content)
-            return {
-                "correctness": float(score_data.get("correctness", 0.0)),
-                "code_quality": float(score_data.get("code_quality", 0.0)),
-                "efficiency": float(score_data.get("efficiency", 0.0)),
-                "documentation": float(score_data.get("documentation", 0.0)),
-                "total_score": float(score_data.get("total_score", 0.0)),
-                "feedback": score_data.get("feedback", "No feedback provided"),
-            }
+        except json.JSONDecodeError:
+            # Try to find and parse just the JSON part more aggressively
+            # Look for JSON that might span multiple lines
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_matches = re.findall(json_pattern, cleaned_content, re.DOTALL)
+            for match in json_matches:
+                try:
+                    score_data = json.loads(match)
+                    if "correctness" in score_data:
+                        return {
+                            "correctness": float(score_data.get("correctness", 0.0)),
+                            "code_quality": float(score_data.get("code_quality", 0.0)),
+                            "efficiency": float(score_data.get("efficiency", 0.0)),
+                            "documentation": float(score_data.get("documentation", 0.0)),
+                            "total_score": float(score_data.get("total_score", 0.0)),
+                            "feedback": score_data.get("feedback", "No feedback provided"),
+                        }
+                except json.JSONDecodeError:
+                    continue
+            
+            # If all parsing attempts fail, raise the error
+            raise json.JSONDecodeError("Could not parse JSON from response", cleaned_content, 0)
+            
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Warning: Could not parse score response: {e}", file=sys.stderr)
-        print(f"Response content: {content[:500]}", file=sys.stderr)
+        print(f"Response content: {content[:500] if 'content' in locals() else 'N/A'}", file=sys.stderr)
         return {
             "correctness": 0.0,
             "code_quality": 0.0,
@@ -699,16 +773,63 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             f.write(f"  Anthropic Average Throughput: {anthropic_avg_throughput:.2f} tokens/sec\n")
             f.write("\n")
             
-            # Count winners
-            cerebras_wins_score = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
-            anthropic_wins_score = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
-            ties_score = len(successful_results) - cerebras_wins_score - anthropic_wins_score
+            cerebras_input_throughput = [r['cerebras']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_input_throughput = [r['anthropic']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
             
-            f.write("SCORE COMPARISON BREAKDOWN:\n")
-            f.write(f"  Cerebras Wins:  {cerebras_wins_score} ({100*cerebras_wins_score/len(successful_results):.1f}%)\n")
-            f.write(f"  Anthropic Wins: {anthropic_wins_score} ({100*anthropic_wins_score/len(successful_results):.1f}%)\n")
-            f.write(f"  Ties:           {ties_score} ({100*ties_score/len(successful_results):.1f}%)\n")
-            f.write("\n")
+            cerebras_output_throughput = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_output_throughput = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
+            
+            cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
+            
+            # Calculate averages and P99
+            def calc_stats(values):
+                if not values:
+                    return 0.0, 0.0
+                avg = sum(values) / len(values)
+                p99 = calculate_percentile(values, 99.0)
+                return avg, p99
+            
+            c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
+        g_ttft_avg, g_ttft_p99 = calc_stats(anthropic_ttft)
+        
+        c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
+        g_input_tp_avg, g_input_tp_p99 = calc_stats(anthropic_input_throughput)
+        
+        c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
+        g_output_tp_avg, g_output_tp_p99 = calc_stats(anthropic_output_throughput)
+        
+        c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
+        g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
+        
+        f.write("PERFORMANCE METRICS SUMMARY:\n")
+        f.write("="*95 + "\n")
+        f.write(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}\n")
+        f.write("-"*95 + "\n")
+        f.write(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {g_ttft_avg:<20.3f} {g_ttft_p99:<20.3f}\n")
+        f.write(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {g_input_tp_avg:<20.2f} {g_input_tp_p99:<20.2f}\n")
+        f.write(f"{'Output Throughput (tok/s)':<35} {c_output_tp_avg:<20.2f} {c_output_tp_p99:<20.2f} {g_output_tp_avg:<20.2f} {g_output_tp_p99:<20.2f}\n")
+        f.write(f"{'Inter-Token Latency (s)':<35} {c_latency_avg:<20.4f} {c_latency_p99:<20.4f} {g_latency_avg:<20.4f} {g_latency_p99:<20.4f}\n")
+        f.write("\n")
+        
+        f.write("LEGACY PERFORMANCE METRICS (for reference):\n")
+        f.write(f"  Cerebras Average Time:  {cerebras_avg_time:.3f} seconds\n")
+        f.write(f"  Anthropic Average Time: {anthropic_avg_time:.3f} seconds\n")
+        f.write(f"  Speed Up: {anthropic_avg_time / cerebras_avg_time:.2f}x (Cerebras faster)\n" if cerebras_avg_time > 0 else "  Speed Up: N/A\n")
+        f.write(f"  Cerebras Average Throughput:  {cerebras_avg_throughput:.2f} tokens/sec\n")
+        f.write(f"  Anthropic Average Throughput: {anthropic_avg_throughput:.2f} tokens/sec\n")
+        f.write("\n")
+        
+        # Count winners
+        cerebras_wins_score = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
+        anthropic_wins_score = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
+        ties_score = len(successful_results) - cerebras_wins_score - anthropic_wins_score
+        
+        f.write("SCORE COMPARISON BREAKDOWN:\n")
+        f.write(f"  Cerebras Wins:  {cerebras_wins_score} ({100*cerebras_wins_score/len(successful_results):.1f}%)\n")
+        f.write(f"  Anthropic Wins: {anthropic_wins_score} ({100*anthropic_wins_score/len(successful_results):.1f}%)\n")
+        f.write(f"  Ties:           {ties_score} ({100*ties_score/len(successful_results):.1f}%)\n")
+        f.write("\n")
         
         f.write("="*95 + "\n")
         f.write("DETAILED RESULTS\n")
@@ -898,7 +1019,7 @@ def main():
         "--score-model",
         dest="score_model",
         default=None,
-        help="Model to use for scoring (default: same as --model)"
+        help="Model to use for scoring (default: Anthropic claude-3-5-haiku-20241022)"
     )
     
     parser.add_argument(
@@ -964,7 +1085,15 @@ def main():
         # Process each prompt
         results = []
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = f"batch_output_{timestamp}"
+        
+        # Ensure all batch outputs are saved under the output directory
+        # Get absolute path to output directory to ensure consistency
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        output_base_dir = os.path.join(script_dir, "output")
+        os.makedirs(output_base_dir, exist_ok=True)
+        
+        # Create batch output directory under output/
+        output_dir = os.path.join(output_base_dir, f"batch_output_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
         
         for idx, prompt_data in enumerate(prompts_data, 1):
@@ -1118,40 +1247,40 @@ def main():
                 
                 for metric_name, key, multiplier, unit, lower_is_better in perf_metrics:
                     c_val = cerebras_perf[key] * multiplier
-                    a_val = anthropic_perf[key] * multiplier
+                    g_val = anthropic_perf[key] * multiplier
                     
                     # Calculate speedup (how many times faster is the winner)
                     if lower_is_better:
-                        if c_val < a_val:
+                        if c_val < g_val:
                             winner = "Cerebras"
                             if c_val > 0:
-                                speedup = a_val / c_val
+                                speedup = g_val / c_val
                                 speedup_display = f"{speedup:.2f}x (C)"
                             else:
                                 speedup_display = "N/A"
-                        elif a_val < c_val:
+                        elif g_val < c_val:
                             winner = "Anthropic"
-                            if a_val > 0:
-                                speedup = c_val / a_val
-                                speedup_display = f"{speedup:.2f}x (A)"
+                            if g_val > 0:
+                                speedup = c_val / g_val
+                                speedup_display = f"{speedup:.2f}x (G)"
                             else:
                                 speedup_display = "N/A"
                         else:
                             winner = "Tie"
                             speedup_display = "1.00x"
                     else:
-                        if c_val > a_val:
+                        if c_val > g_val:
                             winner = "Cerebras"
-                            if a_val > 0:
-                                speedup = c_val / a_val
+                            if g_val > 0:
+                                speedup = c_val / g_val
                                 speedup_display = f"{speedup:.2f}x (C)"
                             else:
                                 speedup_display = "N/A"
-                        elif a_val > c_val:
+                        elif g_val > c_val:
                             winner = "Anthropic"
                             if c_val > 0:
-                                speedup = a_val / c_val
-                                speedup_display = f"{speedup:.2f}x (A)"
+                                speedup = g_val / c_val
+                                speedup_display = f"{speedup:.2f}x (G)"
                             else:
                                 speedup_display = "N/A"
                         else:
@@ -1159,8 +1288,8 @@ def main():
                             speedup_display = "1.00x"
                     
                     c_display = f"{c_val:.2f} {unit}"
-                    a_display = f"{a_val:.2f} {unit}"
-                    print(f"{metric_name:<35} {c_display:<18} {a_display:<18} {speedup_display:<12} {winner:<10}", file=sys.stderr)
+                    g_display = f"{g_val:.2f} {unit}"
+                    print(f"{metric_name:<35} {c_display:<18} {g_display:<18} {speedup_display:<12} {winner:<10}", file=sys.stderr)
             
             # Display Code Score Comparison Table
             print("\n" + "="*80, file=sys.stderr)
@@ -1179,19 +1308,19 @@ def main():
             
             for metric_name, key, weight in score_metrics:
                 c_val = cerebras_scores[key]
-                a_val = anthropic_scores[key]
+                g_val = anthropic_scores[key]
                 
                 if weight < 1.0:
                     c_weighted = c_val * weight
-                    a_weighted = a_val * weight
+                    g_weighted = g_val * weight
                     c_display = f"{c_val:.3f} (×{weight:.2f} = {c_weighted:.3f})"
-                    a_display = f"{a_val:.3f} (×{weight:.2f} = {a_weighted:.3f})"
+                    g_display = f"{g_val:.3f} (×{weight:.2f} = {g_weighted:.3f})"
                 else:
                     c_display = f"{c_val:.3f}"
-                    a_display = f"{a_val:.3f}"
+                    g_display = f"{g_val:.3f}"
                 
-                winner = "Cerebras" if c_val > a_val else "Anthropic" if a_val > c_val else "Tie"
-                print(f"{metric_name:<35} {c_display:<20} {a_display:<20} {winner:<10}", file=sys.stderr)
+                winner = "Cerebras" if c_val > g_val else "Anthropic" if g_val > c_val else "Tie"
+                print(f"{metric_name:<35} {c_display:<20} {g_display:<20} {winner:<10}", file=sys.stderr)
             
             # Display comprehensive summary
             print("\n" + "="*95, file=sys.stderr)
@@ -1240,8 +1369,14 @@ def main():
             # Save comprehensive outputs to files
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            cerebras_file = f"cerebras_output_{timestamp}.txt"
-            anthropic_file = f"anthropic_output_{timestamp}.txt"
+            # Ensure all outputs are saved under the output directory
+            # Get absolute path to output directory to ensure consistency
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            output_base_dir = os.path.join(script_dir, "output")
+            os.makedirs(output_base_dir, exist_ok=True)
+            
+            cerebras_file = os.path.join(output_base_dir, f"cerebras_output_{timestamp}.txt")
+            anthropic_file = os.path.join(output_base_dir, f"anthropic_output_{timestamp}.txt")
             
             try:
                 # Save Cerebras output with all details

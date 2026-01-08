@@ -4,7 +4,7 @@ A command-line interface for calling the Cerebras OpenAI-compatible chat API wit
 
 ## Features
 
-- **Dual API Support**: Compare Cerebras and Anthropic generation side-by-side
+- **Dual API Support**: Compare Cerebras (Qwen 3 235B Instruct) and Anthropic generation side-by-side
 - **Automatic Scoring**: Code quality scoring using a comprehensive rubric
 - **Performance Metrics**: Track TTFT, latency, and throughput
 - **Batch Processing**: Process multiple prompts from JSON/JSONL files
@@ -28,7 +28,7 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key-here"  # Required for compariso
 ## Default Behavior
 
 By default, the script:
-- **Compares** Cerebras vs Anthropic generation (`--compare` enabled)
+- **Compares** Cerebras (Qwen 3 235B Instruct) vs Anthropic generation (`--compare` enabled)
 - **Scores** all generated code (`--score` enabled)
 - **Saves** all outputs to files (not printed to console)
 
@@ -46,7 +46,7 @@ python cerebras_chat.py "Implement LRU cache in Python"
 ```
 
 This will automatically:
-- Generate code with both Cerebras and Anthropic
+- Generate code with both Cerebras (Qwen 3 235B Instruct) and Anthropic
 - Score both outputs
 - Display comparison tables
 - Save detailed results to files
@@ -152,7 +152,7 @@ The summary file includes:
 - **Documentation** (0.20): Are there docstrings, comments, type hints?
 
 ### Comparison Options (Enabled by Default)
-- `--compare`: Compare Cerebras vs Anthropic generation (default: enabled)
+- `--compare`: Compare Cerebras (Qwen 3 235B Instruct) vs Anthropic generation (default: enabled)
 - `--no-compare`: Disable comparison mode (use single API only)
 
 **Comparison includes:**
@@ -273,23 +273,25 @@ When processing multiple prompts, the script displays a comprehensive summary wi
 📊 BATCH SUMMARY
 ===============================================================================================
 Average Scores:
-  Cerebras:  0.938
-  Anthropic: 0.862
-  Winner: Cerebras
+  Cerebras (Qwen 3 235B Instruct):  0.938
+  Anthropic:                         0.862
+  Winner: Cerebras (Qwen 3 235B Instruct)
 
 Wins:
-  Cerebras:  4/4
-  Anthropic: 0/4
+  Cerebras (Qwen 3 235B Instruct):  4/4
+  Anthropic:                         0/4
 
 ===============================================================================================
 ⚡ PERFORMANCE METRICS SUMMARY
 ===============================================================================================
-Metric                              Cerebras Avg         Cerebras P99         Anthropic Avg        Anthropic P99       
------------------------------------------------------------------------------------------------
-TTFT (seconds)                      7.557                11.816               23.319               24.869              
-Input Throughput (tok/s)            12.97                24.08                3.66                 4.08                
-Output Throughput (tok/s)           581.57               1110.30              67.65                68.61               
-Inter-Token Latency (s)             0.0023               0.0039               0.0148               0.0153              
+Metric                              Cerebras (Qwen 3 235B) Avg    Cerebras (Qwen 3 235B) P99    Anthropic Avg        Anthropic P99       
+------------------------------------------------------------------------------------------------------------------------------------------------
+TTFT (seconds)                      7.557                         11.816                       23.319               24.869              
+Input Throughput (tok/s)            12.97                         24.08                        3.66                 4.08                
+Output Throughput (tok/s)           581.57                        1110.30                       67.65                68.61               
+Inter-Token Latency (s)             0.0023                        0.0039                        0.0148               0.0153              
+
+Note: Cerebras model is Qwen 3 235B Instruct (qwen-3-235b-a22b-instruct-2507)
 ```
 
 ### Performance Metrics Explained
@@ -317,12 +319,12 @@ The performance summary includes:
 ### Interpretation
 
 In the example above:
-- **Cerebras** shows significantly better performance across all metrics:
+- **Cerebras (Qwen 3 235B Instruct)** shows significantly better performance across all metrics:
   - ~3x faster TTFT (7.6s vs 23.3s average)
   - ~8.6x higher output throughput (581.6 vs 67.7 tokens/sec)
   - ~6.4x lower inter-token latency (0.0023s vs 0.0148s)
-- **Code Quality**: Cerebras also achieved higher average scores (0.938 vs 0.862)
-- **Consistency**: P99 values show Cerebras maintains better performance even in worst-case scenarios
+- **Code Quality**: Cerebras (Qwen 3 235B Instruct) also achieved higher average scores (0.938 vs 0.862)
+- **Consistency**: P99 values show Cerebras (Qwen 3 235B Instruct) maintains better performance even in worst-case scenarios
 
 ## License
 

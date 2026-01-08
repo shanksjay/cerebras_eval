@@ -590,6 +590,18 @@ def process_single_prompt(prompt: str, language: str, args, output_dir: str, pro
     }
 
 
+def calculate_percentile(values: List[float], percentile: float) -> float:
+    """Calculate the percentile of a list of values."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    index = (percentile / 100.0) * (len(sorted_values) - 1)
+    lower = int(index)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    weight = index - lower
+    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+
 def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, timestamp: str):
     """Generate a comprehensive summary of batch processing results."""
     summary_file = os.path.join(output_dir, f"summary_{timestamp}.txt")
@@ -636,7 +648,50 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             f.write(f"  Winner: {'Cerebras' if cerebras_avg_score > anthropic_avg_score else 'Anthropic' if anthropic_avg_score > cerebras_avg_score else 'Tie'}\n")
             f.write("\n")
             
-            f.write("AVERAGE PERFORMANCE METRICS:\n")
+            # Collect performance metrics for detailed analysis
+            cerebras_ttft = [r['cerebras']['performance']['ttft_seconds'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_ttft = [r['anthropic']['performance']['ttft_seconds'] for r in successful_results if r['anthropic']['performance']]
+            
+            cerebras_input_throughput = [r['cerebras']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_input_throughput = [r['anthropic']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
+            
+            cerebras_output_throughput = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_output_throughput = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
+            
+            cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
+            anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
+            
+            # Calculate averages and P99
+            def calc_stats(values):
+                if not values:
+                    return 0.0, 0.0
+                avg = sum(values) / len(values)
+                p99 = calculate_percentile(values, 99.0)
+                return avg, p99
+            
+            c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
+            a_ttft_avg, a_ttft_p99 = calc_stats(anthropic_ttft)
+            
+            c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
+            a_input_tp_avg, a_input_tp_p99 = calc_stats(anthropic_input_throughput)
+            
+            c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
+            a_output_tp_avg, a_output_tp_p99 = calc_stats(anthropic_output_throughput)
+            
+            c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
+            a_latency_avg, a_latency_p99 = calc_stats(anthropic_token_latency)
+            
+            f.write("PERFORMANCE METRICS SUMMARY:\n")
+            f.write("="*95 + "\n")
+            f.write(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}\n")
+            f.write("-"*95 + "\n")
+            f.write(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {a_ttft_avg:<20.3f} {a_ttft_p99:<20.3f}\n")
+            f.write(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {a_input_tp_avg:<20.2f} {a_input_tp_p99:<20.2f}\n")
+            f.write(f"{'Output Throughput (tok/s)':<35} {c_output_tp_avg:<20.2f} {c_output_tp_p99:<20.2f} {a_output_tp_avg:<20.2f} {a_output_tp_p99:<20.2f}\n")
+            f.write(f"{'Inter-Token Latency (s)':<35} {c_latency_avg:<20.4f} {c_latency_p99:<20.4f} {a_latency_avg:<20.4f} {a_latency_p99:<20.4f}\n")
+            f.write("\n")
+            
+            f.write("LEGACY PERFORMANCE METRICS (for reference):\n")
             f.write(f"  Cerebras Average Time:  {cerebras_avg_time:.3f} seconds\n")
             f.write(f"  Anthropic Average Time: {anthropic_avg_time:.3f} seconds\n")
             f.write(f"  Speed Up: {anthropic_avg_time / cerebras_avg_time:.2f}x (Cerebras faster)\n" if cerebras_avg_time > 0 else "  Speed Up: N/A\n")
@@ -697,6 +752,48 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         print(f"\nWins:", file=sys.stderr)
         print(f"  Cerebras:  {cerebras_wins}/{len(successful_results)}", file=sys.stderr)
         print(f"  Anthropic: {anthropic_wins}/{len(successful_results)}", file=sys.stderr)
+        
+        # Performance metrics summary
+        cerebras_ttft = [r['cerebras']['performance']['ttft_seconds'] for r in successful_results if r['cerebras']['performance']]
+        anthropic_ttft = [r['anthropic']['performance']['ttft_seconds'] for r in successful_results if r['anthropic']['performance']]
+        
+        cerebras_input_throughput = [r['cerebras']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+        anthropic_input_throughput = [r['anthropic']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
+        
+        cerebras_output_throughput = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
+        anthropic_output_throughput = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
+        
+        cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
+        anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
+        
+        def calc_stats(values):
+            if not values:
+                return 0.0, 0.0
+            avg = sum(values) / len(values)
+            p99 = calculate_percentile(values, 99.0)
+            return avg, p99
+        
+        c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
+        a_ttft_avg, a_ttft_p99 = calc_stats(anthropic_ttft)
+        
+        c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
+        a_input_tp_avg, a_input_tp_p99 = calc_stats(anthropic_input_throughput)
+        
+        c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
+        a_output_tp_avg, a_output_tp_p99 = calc_stats(anthropic_output_throughput)
+        
+        c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
+        a_latency_avg, a_latency_p99 = calc_stats(anthropic_token_latency)
+        
+        print(f"\n{'='*95}", file=sys.stderr)
+        print("⚡ PERFORMANCE METRICS SUMMARY", file=sys.stderr)
+        print(f"{'='*95}", file=sys.stderr)
+        print(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}", file=sys.stderr)
+        print("-"*95, file=sys.stderr)
+        print(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {a_ttft_avg:<20.3f} {a_ttft_p99:<20.3f}", file=sys.stderr)
+        print(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {a_input_tp_avg:<20.2f} {a_input_tp_p99:<20.2f}", file=sys.stderr)
+        print(f"{'Output Throughput (tok/s)':<35} {c_output_tp_avg:<20.2f} {c_output_tp_p99:<20.2f} {a_output_tp_avg:<20.2f} {a_output_tp_p99:<20.2f}", file=sys.stderr)
+        print(f"{'Inter-Token Latency (s)':<35} {c_latency_avg:<20.4f} {c_latency_p99:<20.4f} {a_latency_avg:<20.4f} {a_latency_p99:<20.4f}", file=sys.stderr)
 
 
 def main():

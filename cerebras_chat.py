@@ -3,7 +3,7 @@
 Cerebras Chat API Client
 
 Calls the Cerebras OpenAI-compatible chat API with user prompts.
-Can also compare Cerebras vs Google generation with scoring.
+Can also compare Cerebras vs Anthropic generation with scoring.
 
 Usage:
     # Basic usage with prompt as argument
@@ -21,12 +21,12 @@ Usage:
     # Generate code and score it
     python cerebras_chat.py "Implement LRU cache in Python" --score
     
-    # Compare Cerebras vs Google generation
+    # Compare Cerebras vs Anthropic generation
     python cerebras_chat.py "Implement LRU cache in Python" --compare
     
 Environment Variables:
     CEREBRAS_API_KEY: Required for Cerebras API.
-    GOOGLE_API_KEY: Required for Google API (when using --compare).
+    ANTHROPIC_API_KEY: Required for Anthropic API (when using --compare).
 """
 
 import argparse
@@ -45,10 +45,9 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from google import genai
-    from google.genai import types
+    import anthropic
 except ImportError:
-    print("Error: 'google-genai' library not found. Install with: pip install -U google-genai")
+    print("Error: 'anthropic' library not found. Install with: pip install anthropic")
     sys.exit(1)
 
 
@@ -185,22 +184,22 @@ def extract_content(response: Dict[str, Any]) -> str:
         raise
 
 
-def call_google_api(
+def call_anthropic_api(
     prompt: str,
     api_key: str,
-    model: str = "gemini-3-flash-preview",
+    model: str = "claude-3-5-haiku-20241022",
     system_message: Optional[str] = None,
     temperature: float = 0.0,
     max_tokens: int = 4096,
     track_timing: bool = False,
 ) -> Tuple[Any, Optional[Dict[str, float]]]:
     """
-    Call Google Gemini API for chat completions using google-genai library.
+    Call Anthropic Claude API for chat completions using anthropic library.
     
     Args:
         prompt: User prompt message
-        api_key: Google API key
-        model: Model name (default: gemini-3-flash-preview)
+        api_key: Anthropic API key
+        model: Model name (default: claude-3-5-haiku-20241022)
         system_message: Optional system message
         temperature: Sampling temperature (0.0 = deterministic)
         max_tokens: Max tokens to generate
@@ -213,55 +212,46 @@ def call_google_api(
     
     try:
         # Create client with API key
-        client = genai.Client(api_key=api_key)
+        client = anthropic.Anthropic(api_key=api_key)
         
         # Track timing
         if track_timing:
             request_start = time.time()
         
-        # Build generation config with system_instruction, temperature, and max_tokens
-        config_params = {}
+        # Build messages list
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Build API call parameters
+        api_params = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        
         if system_message:
-            config_params["system_instruction"] = system_message
+            api_params["system"] = system_message
+        
         if temperature > 0:
-            config_params["temperature"] = temperature
-        if max_tokens > 0:
-            config_params["max_output_tokens"] = max_tokens
+            api_params["temperature"] = temperature
         
-        # Create config object if we have any parameters, otherwise None
-        config = types.GenerateContentConfig(**config_params) if config_params else None
-        
-        # Generate content with config
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=config
-        )
+        # Generate content
+        response = client.messages.create(**api_params)
         
         if track_timing:
             request_end = time.time()
             total_time = request_end - request_start
             
             # Extract token usage from response
-            # The response object has usage_metadata attribute
             try:
-                if hasattr(response, 'usage_metadata'):
-                    usage = response.usage_metadata
-                    # Try different attribute names that might be used
-                    input_tokens = getattr(usage, 'prompt_token_count', getattr(usage, 'input_token_count', 0))
-                    output_tokens = getattr(usage, 'candidates_token_count', getattr(usage, 'output_token_count', 0))
-                    total_tokens = getattr(usage, 'total_token_count', input_tokens + output_tokens)
+                if hasattr(response, 'usage'):
+                    usage = response.usage
+                    input_tokens = getattr(usage, 'input_tokens', 0)
+                    output_tokens = getattr(usage, 'output_tokens', 0)
+                    total_tokens = input_tokens + output_tokens
                 else:
-                    # Fallback: try to access as dict
-                    usage = getattr(response, 'usage_metadata', {})
-                    if isinstance(usage, dict):
-                        input_tokens = usage.get('prompt_token_count', usage.get('input_token_count', 0))
-                        output_tokens = usage.get('candidates_token_count', usage.get('output_token_count', 0))
-                        total_tokens = usage.get('total_token_count', input_tokens + output_tokens)
-                    else:
-                        input_tokens = 0
-                        output_tokens = 0
-                        total_tokens = 0
+                    input_tokens = 0
+                    output_tokens = 0
+                    total_tokens = 0
             except Exception:
                 # If we can't extract token usage, set to 0
                 input_tokens = 0
@@ -302,30 +292,35 @@ def call_google_api(
         return response, None
         
     except Exception as e:
-        print(f"Error calling Google API: {e}", file=sys.stderr)
+        print(f"Error calling Anthropic API: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         raise
 
 
-def extract_google_content(response: Any) -> str:
-    """Extract content from Google Gemini API response object."""
+def extract_anthropic_content(response: Any) -> str:
+    """Extract content from Anthropic Claude API response object."""
     try:
-        # The new API returns response.text directly
-        if hasattr(response, 'text'):
-            return response.text
-        # Fallback: try to access candidates if text attribute doesn't exist
-        elif hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'content'):
-                content = candidate.content
-                if hasattr(content, 'parts') and content.parts:
-                    part = content.parts[0]
-                    if hasattr(part, 'text'):
-                        return part.text
+        # Anthropic API returns content in response.content
+        if hasattr(response, 'content'):
+            # content is a list of content blocks
+            if isinstance(response.content, list) and len(response.content) > 0:
+                # Get the first content block
+                first_block = response.content[0]
+                if hasattr(first_block, 'text'):
+                    return first_block.text
+                elif isinstance(first_block, dict) and 'text' in first_block:
+                    return first_block['text']
+        # Fallback: try to access as dict
+        if isinstance(response, dict) and 'content' in response:
+            content = response['content']
+            if isinstance(content, list) and len(content) > 0:
+                first_block = content[0]
+                if isinstance(first_block, dict) and 'text' in first_block:
+                    return first_block['text']
         return ""
-    except (AttributeError, IndexError) as e:
-        print(f"Error extracting content from Google response: {e}", file=sys.stderr)
+    except (AttributeError, IndexError, KeyError) as e:
+        print(f"Error extracting content from Anthropic response: {e}", file=sys.stderr)
         print(f"Response type: {type(response)}", file=sys.stderr)
         if hasattr(response, '__dict__'):
             print(f"Response attributes: {dir(response)}", file=sys.stderr)
@@ -336,10 +331,10 @@ def score_code(
     code: str,
     prompt: str,
     api_key: str,
-    model: str = "gemini-3-flash-preview",
+    model: str = "claude-3-5-haiku-20241022",
     language: str = "python",
     track_timing: bool = False,
-    use_google: bool = True,
+    use_anthropic: bool = True,
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, float]]]:
     """
     Score code using a rubric-based evaluation.
@@ -347,11 +342,11 @@ def score_code(
     Args:
         code: The generated code to score
         prompt: The original prompt that generated the code
-        api_key: API key (Google or Cerebras)
-        model: Model name for scoring (default: gemini-3-flash-preview)
+        api_key: API key (Anthropic or Cerebras)
+        model: Model name for scoring (default: claude-3-5-haiku-20241022)
         language: Programming language (default: python)
         track_timing: Whether to track performance metrics
-        use_google: Whether to use Google API (True) or Cerebras API (False)
+        use_anthropic: Whether to use Anthropic API (True) or Cerebras API (False)
         
     Returns:
         Tuple of (API response with scoring results, performance metrics or None)
@@ -385,8 +380,8 @@ Original prompt:
 
 Evaluate this code according to the rubric and provide scores in JSON format."""
 
-    if use_google:
-        return call_google_api(
+    if use_anthropic:
+        return call_anthropic_api(
             prompt=scoring_prompt,
             api_key=api_key,
             model=model,
@@ -422,20 +417,20 @@ def clean_json_response(raw_text: str) -> str:
     return clean_text
 
 
-def parse_score_response(response: Any, is_google: bool = True) -> Dict[str, float]:
+def parse_score_response(response: Any, is_anthropic: bool = True) -> Dict[str, float]:
     """
     Parse scoring response and extract scores.
     
     Args:
-        response: API response from scoring call (dict for Cerebras, object for Google)
-        is_google: Whether the response is from Google API
+        response: API response from scoring call (dict for Cerebras, object for Anthropic)
+        is_anthropic: Whether the response is from Anthropic API
         
     Returns:
         Dictionary with scores and feedback
     """
     try:
-        if is_google:
-            content = extract_google_content(response)
+        if is_anthropic:
+            content = extract_anthropic_content(response)
         else:
             content = extract_content(response)
         
@@ -515,12 +510,12 @@ def process_single_prompt(prompt: str, language: str, args, output_dir: str, pro
     """
     # Get both API keys
     cerebras_key = args.api_key or os.getenv("CEREBRAS_API_KEY")
-    google_key = os.getenv("GOOGLE_API_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     
     if not cerebras_key:
         raise ValueError("CEREBRAS_API_KEY environment variable not set and --api-key not provided")
-    if not google_key:
-        raise ValueError("GOOGLE_API_KEY environment variable not set")
+    if not anthropic_key:
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
     
     # Generate with Cerebras
     cerebras_response, cerebras_perf = call_cerebras_api(
@@ -537,46 +532,46 @@ def process_single_prompt(prompt: str, language: str, args, output_dir: str, pro
     )
     cerebras_content = extract_content(cerebras_response)
     
-    # Generate with Google
-    google_response, google_perf = call_google_api(
+    # Generate with Anthropic
+    anthropic_response, anthropic_perf = call_anthropic_api(
         prompt=prompt,
-        api_key=google_key,
-        model=args.google_model,
+        api_key=anthropic_key,
+        model=args.anthropic_model,
         system_message=args.system_message,
         temperature=args.temperature,
         max_tokens=args.max_completion_tokens if args.max_completion_tokens > 0 else 4096,
         track_timing=True,
     )
-    google_content = extract_google_content(google_response)
+    anthropic_content = extract_anthropic_content(anthropic_response)
     
-    # Score both outputs using Google
+    # Score both outputs using Anthropic
     cerebras_score_response, cerebras_score_perf = score_code(
         code=cerebras_content,
         prompt=prompt,
-        api_key=google_key,
-        model=args.google_model,
+        api_key=anthropic_key,
+        model=args.anthropic_model,
         language=language,
         track_timing=True,
-        use_google=True,
+        use_anthropic=True,
     )
-    cerebras_scores = parse_score_response(cerebras_score_response, is_google=True)
+    cerebras_scores = parse_score_response(cerebras_score_response, is_anthropic=True)
     
-    google_score_response, google_score_perf = score_code(
-        code=google_content,
+    anthropic_score_response, anthropic_score_perf = score_code(
+        code=anthropic_content,
         prompt=prompt,
-        api_key=google_key,
-        model=args.google_model,
+        api_key=anthropic_key,
+        model=args.anthropic_model,
         language=language,
         track_timing=True,
-        use_google=True,
+        use_anthropic=True,
     )
-    google_scores = parse_score_response(google_score_response, is_google=True)
+    anthropic_scores = parse_score_response(anthropic_score_response, is_anthropic=True)
     
     # Save outputs to files
     file_prefix = f"prompt_{prompt_id:03d}"
     
     cerebras_file = os.path.join(output_dir, f"{file_prefix}_cerebras.txt")
-    google_file = os.path.join(output_dir, f"{file_prefix}_google.txt")
+    anthropic_file = os.path.join(output_dir, f"{file_prefix}_anthropic.txt")
     
     # Save Cerebras output with all details
     with open(cerebras_file, 'w', encoding='utf-8') as f:
@@ -614,41 +609,41 @@ def process_single_prompt(prompt: str, language: str, args, output_dir: str, pro
         f.write("="*95 + "\n\n")
         f.write(cerebras_content)
     
-    # Save Google output with all details
-    with open(google_file, 'w', encoding='utf-8') as f:
+    # Save Anthropic output with all details
+    with open(anthropic_file, 'w', encoding='utf-8') as f:
         f.write("="*95 + "\n")
-        f.write("GOOGLE CODE GENERATION OUTPUT\n")
+        f.write("ANTHROPIC CODE GENERATION OUTPUT\n")
         f.write("="*95 + "\n\n")
         f.write(f"Prompt ID: {prompt_id}\n")
         f.write(f"Prompt: {prompt}\n")
-        f.write(f"Model: {args.google_model}\n")
+        f.write(f"Model: {args.anthropic_model}\n")
         f.write(f"Language: {language}\n")
         f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
         f.write("\n" + "="*95 + "\n")
         f.write("PERFORMANCE METRICS\n")
         f.write("="*95 + "\n")
-        if google_perf:
-            f.write(f"Time To First Token (TTFT):     {google_perf['ttft_seconds']*1000:.2f} ms\n")
-            f.write(f"Latency Between Tokens:        {google_perf['token_latency_seconds']*1000:.2f} ms/token\n")
-            f.write(f"Input Throughput:               {google_perf['input_throughput_tokens_per_sec']:.2f} tokens/sec\n")
-            f.write(f"Output Throughput:              {google_perf['output_throughput_tokens_per_sec']:.2f} tokens/sec\n")
-            f.write(f"Total Time:                     {google_perf['total_time_seconds']:.3f} seconds\n")
-            f.write(f"Input Tokens:                   {google_perf['input_tokens']}\n")
-            f.write(f"Output Tokens:                  {google_perf['output_tokens']}\n")
-            f.write(f"Total Tokens:                   {google_perf['total_tokens']}\n")
+        if anthropic_perf:
+            f.write(f"Time To First Token (TTFT):     {anthropic_perf['ttft_seconds']*1000:.2f} ms\n")
+            f.write(f"Latency Between Tokens:        {anthropic_perf['token_latency_seconds']*1000:.2f} ms/token\n")
+            f.write(f"Input Throughput:               {anthropic_perf['input_throughput_tokens_per_sec']:.2f} tokens/sec\n")
+            f.write(f"Output Throughput:              {anthropic_perf['output_throughput_tokens_per_sec']:.2f} tokens/sec\n")
+            f.write(f"Total Time:                     {anthropic_perf['total_time_seconds']:.3f} seconds\n")
+            f.write(f"Input Tokens:                   {anthropic_perf['input_tokens']}\n")
+            f.write(f"Output Tokens:                  {anthropic_perf['output_tokens']}\n")
+            f.write(f"Total Tokens:                   {anthropic_perf['total_tokens']}\n")
         f.write("\n" + "="*95 + "\n")
         f.write("CODE QUALITY SCORES\n")
         f.write("="*95 + "\n")
-        f.write(f"Correctness (0.30):  {google_scores['correctness']:.3f} × 0.30 = {google_scores['correctness'] * 0.30:.3f}\n")
-        f.write(f"Code Quality (0.30): {google_scores['code_quality']:.3f} × 0.30 = {google_scores['code_quality'] * 0.30:.3f}\n")
-        f.write(f"Efficiency (0.20):   {google_scores['efficiency']:.3f} × 0.20 = {google_scores['efficiency'] * 0.20:.3f}\n")
-        f.write(f"Documentation (0.20): {google_scores['documentation']:.3f} × 0.20 = {google_scores['documentation'] * 0.20:.3f}\n")
-        f.write(f"\nTOTAL SCORE: {google_scores['total_score']:.3f} / 1.000\n")
-        f.write(f"\nFeedback: {google_scores['feedback']}\n")
+        f.write(f"Correctness (0.30):  {anthropic_scores['correctness']:.3f} × 0.30 = {anthropic_scores['correctness'] * 0.30:.3f}\n")
+        f.write(f"Code Quality (0.30): {anthropic_scores['code_quality']:.3f} × 0.30 = {anthropic_scores['code_quality'] * 0.30:.3f}\n")
+        f.write(f"Efficiency (0.20):   {anthropic_scores['efficiency']:.3f} × 0.20 = {anthropic_scores['efficiency'] * 0.20:.3f}\n")
+        f.write(f"Documentation (0.20): {anthropic_scores['documentation']:.3f} × 0.20 = {anthropic_scores['documentation'] * 0.20:.3f}\n")
+        f.write(f"\nTOTAL SCORE: {anthropic_scores['total_score']:.3f} / 1.000\n")
+        f.write(f"\nFeedback: {anthropic_scores['feedback']}\n")
         f.write("\n" + "="*95 + "\n")
         f.write("GENERATED CODE\n")
         f.write("="*95 + "\n\n")
-        f.write(google_content)
+        f.write(anthropic_content)
     
     # Return result for summary
     return {
@@ -660,10 +655,10 @@ def process_single_prompt(prompt: str, language: str, args, output_dir: str, pro
             'performance': cerebras_perf,
             'file': cerebras_file,
         },
-        'google': {
-            'score': google_scores['total_score'],
-            'performance': google_perf,
-            'file': google_file,
+        'anthropic': {
+            'score': anthropic_scores['total_score'],
+            'performance': anthropic_perf,
+            'file': anthropic_file,
         },
         'success': True,
     }
@@ -703,42 +698,42 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         if successful_results:
             # Calculate averages
             cerebras_scores = [r['cerebras']['score'] for r in successful_results]
-            google_scores = [r['google']['score'] for r in successful_results]
+            anthropic_scores = [r['anthropic']['score'] for r in successful_results]
             
             cerebras_avg_score = sum(cerebras_scores) / len(cerebras_scores)
-            google_avg_score = sum(google_scores) / len(google_scores)
+            anthropic_avg_score = sum(anthropic_scores) / len(anthropic_scores)
             
             # Performance averages
             cerebras_total_times = [r['cerebras']['performance']['total_time_seconds'] for r in successful_results if r['cerebras']['performance']]
-            google_total_times = [r['google']['performance']['total_time_seconds'] for r in successful_results if r['google']['performance']]
+            anthropic_total_times = [r['anthropic']['performance']['total_time_seconds'] for r in successful_results if r['anthropic']['performance']]
             
             cerebras_avg_time = sum(cerebras_total_times) / len(cerebras_total_times) if cerebras_total_times else 0
-            google_avg_time = sum(google_total_times) / len(google_total_times) if google_total_times else 0
+            anthropic_avg_time = sum(anthropic_total_times) / len(anthropic_total_times) if anthropic_total_times else 0
             
             cerebras_output_throughputs = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
-            google_output_throughputs = [r['google']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['google']['performance']]
+            anthropic_output_throughputs = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
             
             cerebras_avg_throughput = sum(cerebras_output_throughputs) / len(cerebras_output_throughputs) if cerebras_output_throughputs else 0
-            google_avg_throughput = sum(google_output_throughputs) / len(google_output_throughputs) if google_output_throughputs else 0
+            anthropic_avg_throughput = sum(anthropic_output_throughputs) / len(anthropic_output_throughputs) if anthropic_output_throughputs else 0
             
             f.write("AVERAGE CODE QUALITY SCORES:\n")
             f.write(f"  Cerebras:  {cerebras_avg_score:.3f} / 1.000\n")
-            f.write(f"  Google: {google_avg_score:.3f} / 1.000\n")
-            f.write(f"  Winner: {'Cerebras' if cerebras_avg_score > google_avg_score else 'Google' if google_avg_score > cerebras_avg_score else 'Tie'}\n")
+            f.write(f"  Anthropic: {anthropic_avg_score:.3f} / 1.000\n")
+            f.write(f"  Winner: {'Cerebras' if cerebras_avg_score > anthropic_avg_score else 'Anthropic' if anthropic_avg_score > cerebras_avg_score else 'Tie'}\n")
             f.write("\n")
             
             # Collect performance metrics for detailed analysis
             cerebras_ttft = [r['cerebras']['performance']['ttft_seconds'] for r in successful_results if r['cerebras']['performance']]
-            google_ttft = [r['google']['performance']['ttft_seconds'] for r in successful_results if r['google']['performance']]
+            anthropic_ttft = [r['anthropic']['performance']['ttft_seconds'] for r in successful_results if r['anthropic']['performance']]
             
             cerebras_input_throughput = [r['cerebras']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
-            google_input_throughput = [r['google']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['google']['performance']]
+            anthropic_input_throughput = [r['anthropic']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
             
             cerebras_output_throughput = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
-            google_output_throughput = [r['google']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['google']['performance']]
+            anthropic_output_throughput = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
             
             cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
-            google_token_latency = [r['google']['performance']['token_latency_seconds'] for r in successful_results if r['google']['performance']]
+            anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
             
             # Calculate averages and P99
             def calc_stats(values):
@@ -749,20 +744,20 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
                 return avg, p99
             
             c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
-        g_ttft_avg, g_ttft_p99 = calc_stats(google_ttft)
+        g_ttft_avg, g_ttft_p99 = calc_stats(anthropic_ttft)
         
         c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
-        g_input_tp_avg, g_input_tp_p99 = calc_stats(google_input_throughput)
+        g_input_tp_avg, g_input_tp_p99 = calc_stats(anthropic_input_throughput)
         
         c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
-        g_output_tp_avg, g_output_tp_p99 = calc_stats(google_output_throughput)
+        g_output_tp_avg, g_output_tp_p99 = calc_stats(anthropic_output_throughput)
         
         c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
-        g_latency_avg, g_latency_p99 = calc_stats(google_token_latency)
+        g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
         
         f.write("PERFORMANCE METRICS SUMMARY:\n")
         f.write("="*95 + "\n")
-        f.write(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Google Avg':<20} {'Google P99':<20}\n")
+        f.write(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}\n")
         f.write("-"*95 + "\n")
         f.write(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {g_ttft_avg:<20.3f} {g_ttft_p99:<20.3f}\n")
         f.write(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {g_input_tp_avg:<20.2f} {g_input_tp_p99:<20.2f}\n")
@@ -772,20 +767,20 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         
         f.write("LEGACY PERFORMANCE METRICS (for reference):\n")
         f.write(f"  Cerebras Average Time:  {cerebras_avg_time:.3f} seconds\n")
-        f.write(f"  Google Average Time: {google_avg_time:.3f} seconds\n")
-        f.write(f"  Speed Up: {google_avg_time / cerebras_avg_time:.2f}x (Cerebras faster)\n" if cerebras_avg_time > 0 else "  Speed Up: N/A\n")
+        f.write(f"  Anthropic Average Time: {anthropic_avg_time:.3f} seconds\n")
+        f.write(f"  Speed Up: {anthropic_avg_time / cerebras_avg_time:.2f}x (Cerebras faster)\n" if cerebras_avg_time > 0 else "  Speed Up: N/A\n")
         f.write(f"  Cerebras Average Throughput:  {cerebras_avg_throughput:.2f} tokens/sec\n")
-        f.write(f"  Google Average Throughput: {google_avg_throughput:.2f} tokens/sec\n")
+        f.write(f"  Anthropic Average Throughput: {anthropic_avg_throughput:.2f} tokens/sec\n")
         f.write("\n")
         
         # Count winners
-        cerebras_wins_score = sum(1 for r in successful_results if r['cerebras']['score'] > r['google']['score'])
-        google_wins_score = sum(1 for r in successful_results if r['google']['score'] > r['cerebras']['score'])
-        ties_score = len(successful_results) - cerebras_wins_score - google_wins_score
+        cerebras_wins_score = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
+        anthropic_wins_score = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
+        ties_score = len(successful_results) - cerebras_wins_score - anthropic_wins_score
         
         f.write("SCORE COMPARISON BREAKDOWN:\n")
         f.write(f"  Cerebras Wins:  {cerebras_wins_score} ({100*cerebras_wins_score/len(successful_results):.1f}%)\n")
-        f.write(f"  Google Wins: {google_wins_score} ({100*google_wins_score/len(successful_results):.1f}%)\n")
+        f.write(f"  Anthropic Wins: {anthropic_wins_score} ({100*anthropic_wins_score/len(successful_results):.1f}%)\n")
         f.write(f"  Ties:           {ties_score} ({100*ties_score/len(successful_results):.1f}%)\n")
         f.write("\n")
         
@@ -800,13 +795,13 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             
             if result.get('success'):
                 f.write(f"  Cerebras Score:  {result['cerebras']['score']:.3f}\n")
-                f.write(f"  Google Score: {result['google']['score']:.3f}\n")
-                f.write(f"  Winner: {'Cerebras' if result['cerebras']['score'] > result['google']['score'] else 'Google' if result['google']['score'] > result['cerebras']['score'] else 'Tie'}\n")
+                f.write(f"  Anthropic Score: {result['anthropic']['score']:.3f}\n")
+                f.write(f"  Winner: {'Cerebras' if result['cerebras']['score'] > result['anthropic']['score'] else 'Anthropic' if result['anthropic']['score'] > result['cerebras']['score'] else 'Tie'}\n")
                 if result['cerebras']['performance']:
                     f.write(f"  Cerebras Time:  {result['cerebras']['performance']['total_time_seconds']:.3f}s\n")
-                if result['google']['performance']:
-                    f.write(f"  Google Time: {result['google']['performance']['total_time_seconds']:.3f}s\n")
-                f.write(f"  Files: {os.path.basename(result['cerebras']['file'])}, {os.path.basename(result['google']['file'])}\n")
+                if result['anthropic']['performance']:
+                    f.write(f"  Anthropic Time: {result['anthropic']['performance']['total_time_seconds']:.3f}s\n")
+                f.write(f"  Files: {os.path.basename(result['cerebras']['file'])}, {os.path.basename(result['anthropic']['file'])}\n")
             else:
                 f.write(f"  Error: {result.get('error', 'Unknown error')}\n")
             f.write("\n")
@@ -817,33 +812,33 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
     print(f"{'='*95}", file=sys.stderr)
     if successful_results:
         cerebras_scores = [r['cerebras']['score'] for r in successful_results]
-        google_scores = [r['google']['score'] for r in successful_results]
+        anthropic_scores = [r['anthropic']['score'] for r in successful_results]
         cerebras_avg = sum(cerebras_scores) / len(cerebras_scores)
-        google_avg = sum(google_scores) / len(google_scores)
+        anthropic_avg = sum(anthropic_scores) / len(anthropic_scores)
         
         print(f"Average Scores:", file=sys.stderr)
         print(f"  Cerebras:  {cerebras_avg:.3f}", file=sys.stderr)
-        print(f"  Google: {google_avg:.3f}", file=sys.stderr)
-        print(f"  Winner: {'Cerebras' if cerebras_avg > google_avg else 'Google' if google_avg > cerebras_avg else 'Tie'}", file=sys.stderr)
+        print(f"  Anthropic: {anthropic_avg:.3f}", file=sys.stderr)
+        print(f"  Winner: {'Cerebras' if cerebras_avg > anthropic_avg else 'Anthropic' if anthropic_avg > cerebras_avg else 'Tie'}", file=sys.stderr)
         
-        cerebras_wins = sum(1 for r in successful_results if r['cerebras']['score'] > r['google']['score'])
-        google_wins = sum(1 for r in successful_results if r['google']['score'] > r['cerebras']['score'])
+        cerebras_wins = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
+        anthropic_wins = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
         print(f"\nWins:", file=sys.stderr)
         print(f"  Cerebras:  {cerebras_wins}/{len(successful_results)}", file=sys.stderr)
-        print(f"  Google: {google_wins}/{len(successful_results)}", file=sys.stderr)
+        print(f"  Anthropic: {anthropic_wins}/{len(successful_results)}", file=sys.stderr)
         
         # Performance metrics summary
         cerebras_ttft = [r['cerebras']['performance']['ttft_seconds'] for r in successful_results if r['cerebras']['performance']]
-        google_ttft = [r['google']['performance']['ttft_seconds'] for r in successful_results if r['google']['performance']]
+        anthropic_ttft = [r['anthropic']['performance']['ttft_seconds'] for r in successful_results if r['anthropic']['performance']]
         
         cerebras_input_throughput = [r['cerebras']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
-        google_input_throughput = [r['google']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['google']['performance']]
+        anthropic_input_throughput = [r['anthropic']['performance']['input_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
         
         cerebras_output_throughput = [r['cerebras']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['cerebras']['performance']]
-        google_output_throughput = [r['google']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['google']['performance']]
+        anthropic_output_throughput = [r['anthropic']['performance']['output_throughput_tokens_per_sec'] for r in successful_results if r['anthropic']['performance']]
         
         cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
-        google_token_latency = [r['google']['performance']['token_latency_seconds'] for r in successful_results if r['google']['performance']]
+        anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
         
         def calc_stats(values):
             if not values:
@@ -853,21 +848,21 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             return avg, p99
         
         c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
-        g_ttft_avg, g_ttft_p99 = calc_stats(google_ttft)
+        g_ttft_avg, g_ttft_p99 = calc_stats(anthropic_ttft)
         
         c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
-        g_input_tp_avg, g_input_tp_p99 = calc_stats(google_input_throughput)
+        g_input_tp_avg, g_input_tp_p99 = calc_stats(anthropic_input_throughput)
         
         c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
-        g_output_tp_avg, g_output_tp_p99 = calc_stats(google_output_throughput)
+        g_output_tp_avg, g_output_tp_p99 = calc_stats(anthropic_output_throughput)
         
         c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
-        g_latency_avg, g_latency_p99 = calc_stats(google_token_latency)
+        g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
         
         print(f"\n{'='*95}", file=sys.stderr)
         print("⚡ PERFORMANCE METRICS SUMMARY", file=sys.stderr)
         print(f"{'='*95}", file=sys.stderr)
-        print(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Google Avg':<20} {'Google P99':<20}", file=sys.stderr)
+        print(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}", file=sys.stderr)
         print("-"*95, file=sys.stderr)
         print(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {g_ttft_avg:<20.3f} {g_ttft_p99:<20.3f}", file=sys.stderr)
         print(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {g_input_tp_avg:<20.2f} {g_input_tp_p99:<20.2f}", file=sys.stderr)
@@ -977,7 +972,7 @@ def main():
         "--score-model",
         dest="score_model",
         default=None,
-        help="Model to use for scoring (default: Google gemini-3-flash-preview)"
+        help="Model to use for scoring (default: Anthropic claude-3-5-haiku-20241022)"
     )
     
     parser.add_argument(
@@ -991,14 +986,14 @@ def main():
     parser.add_argument(
         "--compare",
         action="store_true",
-        help="Compare Cerebras vs Google generation (requires both API keys) (default: enabled)"
+        help="Compare Cerebras vs Anthropic generation (requires both API keys) (default: enabled)"
     )
     
     parser.add_argument(
-        "--google-model",
-        dest="google_model",
-        default="gemini-3-flash-preview",
-        help="Google model to use (default: gemini-3-flash-preview)"
+        "--anthropic-model",
+        dest="anthropic_model",
+        default="claude-3-5-haiku-20241022",
+        help="Anthropic model to use (default: claude-3-5-haiku-20241022)"
     )
     
     args = parser.parse_args()
@@ -1116,18 +1111,18 @@ def main():
     if args.compare:
         # Get both API keys
         cerebras_key = args.api_key or os.getenv("CEREBRAS_API_KEY")
-        google_key = os.getenv("GOOGLE_API_KEY")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         
         if not cerebras_key:
             print("Error: CEREBRAS_API_KEY environment variable not set and --api-key not provided", file=sys.stderr)
             sys.exit(1)
-        if not google_key:
-            print("Error: GOOGLE_API_KEY environment variable not set", file=sys.stderr)
+        if not anthropic_key:
+            print("Error: ANTHROPIC_API_KEY environment variable not set", file=sys.stderr)
             sys.exit(1)
         
         try:
             print("="*60, file=sys.stderr)
-            print("🔄 COMPARING CEREBRAS vs GOOGLE", file=sys.stderr)
+            print("🔄 COMPARING CEREBRAS vs ANTHROPIC", file=sys.stderr)
             print("="*60, file=sys.stderr)
             
             # Generate with Cerebras
@@ -1146,52 +1141,52 @@ def main():
             )
             cerebras_content = extract_content(cerebras_response)
             
-            # Generate with Google
-            print("[2/4] Generating with Google...", file=sys.stderr)
-            google_response, google_perf = call_google_api(
+            # Generate with Anthropic
+            print("[2/4] Generating with Anthropic...", file=sys.stderr)
+            anthropic_response, anthropic_perf = call_anthropic_api(
                 prompt=prompt,
-                api_key=google_key,
-                model=args.google_model,
+                api_key=anthropic_key,
+                model=args.anthropic_model,
                 system_message=args.system_message,
                 temperature=args.temperature,
                 max_tokens=args.max_completion_tokens if args.max_completion_tokens > 0 else 4096,
                 track_timing=True,
             )
-            google_content = extract_google_content(google_response)
+            anthropic_content = extract_anthropic_content(anthropic_response)
             
-            # Score both outputs using Google
-            print("[3/4] Scoring Cerebras output with Google...", file=sys.stderr)
+            # Score both outputs using Anthropic
+            print("[3/4] Scoring Cerebras output with Anthropic...", file=sys.stderr)
             cerebras_score_response, cerebras_score_perf = score_code(
                 code=cerebras_content,
                 prompt=prompt,
-                api_key=google_key,
-                model=args.google_model,
+                api_key=anthropic_key,
+                model=args.anthropic_model,
                 language=args.language,
                 track_timing=True,
-                use_google=True,
+                use_anthropic=True,
             )
-            cerebras_scores = parse_score_response(cerebras_score_response, is_google=True)
+            cerebras_scores = parse_score_response(cerebras_score_response, is_anthropic=True)
             
-            print("[4/4] Scoring Google output with Google...", file=sys.stderr)
-            google_score_response, google_score_perf = score_code(
-                code=google_content,
+            print("[4/4] Scoring Anthropic output with Anthropic...", file=sys.stderr)
+            anthropic_score_response, anthropic_score_perf = score_code(
+                code=anthropic_content,
                 prompt=prompt,
-                api_key=google_key,
-                model=args.google_model,
+                api_key=anthropic_key,
+                model=args.anthropic_model,
                 language=args.language,
                 track_timing=True,
-                use_google=True,
+                use_anthropic=True,
             )
-            google_scores = parse_score_response(google_score_response, is_google=True)
+            anthropic_scores = parse_score_response(anthropic_score_response, is_anthropic=True)
             
             # Display Performance Comparison Table
             print("\n" + "="*95, file=sys.stderr)
             print("⚡ CODE GENERATION PERFORMANCE COMPARISON", file=sys.stderr)
             print("="*95, file=sys.stderr)
-            print(f"{'Metric':<35} {'Cerebras':<18} {'Google':<18} {'Speed Up':<12} {'Winner':<10}", file=sys.stderr)
+            print(f"{'Metric':<35} {'Cerebras':<18} {'Anthropic':<18} {'Speed Up':<12} {'Winner':<10}", file=sys.stderr)
             print("-" * 93, file=sys.stderr)
             
-            if cerebras_perf and google_perf:
+            if cerebras_perf and anthropic_perf:
                 perf_metrics = [
                     ("Time To First Token (TTFT)", "ttft_seconds", 1000, "ms", True),  # Lower is better
                     ("Latency Between Tokens", "token_latency_seconds", 1000, "ms/token", True),  # Lower is better
@@ -1205,7 +1200,7 @@ def main():
                 
                 for metric_name, key, multiplier, unit, lower_is_better in perf_metrics:
                     c_val = cerebras_perf[key] * multiplier
-                    g_val = google_perf[key] * multiplier
+                    g_val = anthropic_perf[key] * multiplier
                     
                     # Calculate speedup (how many times faster is the winner)
                     if lower_is_better:
@@ -1217,7 +1212,7 @@ def main():
                             else:
                                 speedup_display = "N/A"
                         elif g_val < c_val:
-                            winner = "Google"
+                            winner = "Anthropic"
                             if g_val > 0:
                                 speedup = c_val / g_val
                                 speedup_display = f"{speedup:.2f}x (G)"
@@ -1235,7 +1230,7 @@ def main():
                             else:
                                 speedup_display = "N/A"
                         elif g_val > c_val:
-                            winner = "Google"
+                            winner = "Anthropic"
                             if c_val > 0:
                                 speedup = g_val / c_val
                                 speedup_display = f"{speedup:.2f}x (G)"
@@ -1253,7 +1248,7 @@ def main():
             print("\n" + "="*80, file=sys.stderr)
             print("📊 CODE QUALITY SCORE COMPARISON", file=sys.stderr)
             print("="*80, file=sys.stderr)
-            print(f"{'Metric':<35} {'Cerebras':<20} {'Google':<20} {'Winner':<10}", file=sys.stderr)
+            print(f"{'Metric':<35} {'Cerebras':<20} {'Anthropic':<20} {'Winner':<10}", file=sys.stderr)
             print("-" * 85, file=sys.stderr)
             
             score_metrics = [
@@ -1266,7 +1261,7 @@ def main():
             
             for metric_name, key, weight in score_metrics:
                 c_val = cerebras_scores[key]
-                g_val = google_scores[key]
+                g_val = anthropic_scores[key]
                 
                 if weight < 1.0:
                     c_weighted = c_val * weight
@@ -1277,7 +1272,7 @@ def main():
                     c_display = f"{c_val:.3f}"
                     g_display = f"{g_val:.3f}"
                 
-                winner = "Cerebras" if c_val > g_val else "Google" if g_val > c_val else "Tie"
+                winner = "Cerebras" if c_val > g_val else "Anthropic" if g_val > c_val else "Tie"
                 print(f"{metric_name:<35} {c_display:<20} {g_display:<20} {winner:<10}", file=sys.stderr)
             
             # Display comprehensive summary
@@ -1286,13 +1281,13 @@ def main():
             print("="*95, file=sys.stderr)
             
             # Performance summary
-            if cerebras_perf and google_perf:
-                total_time_speedup = google_perf['total_time_seconds'] / cerebras_perf['total_time_seconds'] if cerebras_perf['total_time_seconds'] > 0 else 0
-                output_throughput_speedup = cerebras_perf['output_throughput_tokens_per_sec'] / google_perf['output_throughput_tokens_per_sec'] if google_perf['output_throughput_tokens_per_sec'] > 0 else 0
+            if cerebras_perf and anthropic_perf:
+                total_time_speedup = anthropic_perf['total_time_seconds'] / cerebras_perf['total_time_seconds'] if cerebras_perf['total_time_seconds'] > 0 else 0
+                output_throughput_speedup = cerebras_perf['output_throughput_tokens_per_sec'] / anthropic_perf['output_throughput_tokens_per_sec'] if anthropic_perf['output_throughput_tokens_per_sec'] > 0 else 0
                 
                 print("\n⚡ PERFORMANCE SUMMARY:", file=sys.stderr)
                 print(f"  • Cerebras generated {cerebras_perf['output_tokens']} tokens in {cerebras_perf['total_time_seconds']:.2f}s ({cerebras_perf['output_throughput_tokens_per_sec']:.2f} tok/s)", file=sys.stderr)
-                print(f"  • Google generated {google_perf['output_tokens']} tokens in {google_perf['total_time_seconds']:.2f}s ({google_perf['output_throughput_tokens_per_sec']:.2f} tok/s)", file=sys.stderr)
+                print(f"  • Anthropic generated {anthropic_perf['output_tokens']} tokens in {anthropic_perf['total_time_seconds']:.2f}s ({anthropic_perf['output_throughput_tokens_per_sec']:.2f} tok/s)", file=sys.stderr)
                 print(f"  • Cerebras is {total_time_speedup:.2f}x faster in total time", file=sys.stderr)
                 print(f"  • Cerebras has {output_throughput_speedup:.2f}x higher output throughput", file=sys.stderr)
             
@@ -1303,17 +1298,17 @@ def main():
             print(f"    - Code Quality: {cerebras_scores['code_quality']:.3f} (weight: 0.30)", file=sys.stderr)
             print(f"    - Efficiency: {cerebras_scores['efficiency']:.3f} (weight: 0.20)", file=sys.stderr)
             print(f"    - Documentation: {cerebras_scores['documentation']:.3f} (weight: 0.20)", file=sys.stderr)
-            print(f"  • Google Total Score: {google_scores['total_score']:.3f}/1.000", file=sys.stderr)
-            print(f"    - Correctness: {google_scores['correctness']:.3f} (weight: 0.30)", file=sys.stderr)
-            print(f"    - Code Quality: {google_scores['code_quality']:.3f} (weight: 0.30)", file=sys.stderr)
-            print(f"    - Efficiency: {google_scores['efficiency']:.3f} (weight: 0.20)", file=sys.stderr)
-            print(f"    - Documentation: {google_scores['documentation']:.3f} (weight: 0.20)", file=sys.stderr)
+            print(f"  • Anthropic Total Score: {anthropic_scores['total_score']:.3f}/1.000", file=sys.stderr)
+            print(f"    - Correctness: {anthropic_scores['correctness']:.3f} (weight: 0.30)", file=sys.stderr)
+            print(f"    - Code Quality: {anthropic_scores['code_quality']:.3f} (weight: 0.30)", file=sys.stderr)
+            print(f"    - Efficiency: {anthropic_scores['efficiency']:.3f} (weight: 0.20)", file=sys.stderr)
+            print(f"    - Documentation: {anthropic_scores['documentation']:.3f} (weight: 0.20)", file=sys.stderr)
             
-            score_diff = google_scores['total_score'] - cerebras_scores['total_score']
+            score_diff = anthropic_scores['total_score'] - cerebras_scores['total_score']
             if abs(score_diff) < 0.01:
                 quality_winner = "Tie"
             elif score_diff > 0:
-                quality_winner = f"Google (+{score_diff:.3f})"
+                quality_winner = f"Anthropic (+{score_diff:.3f})"
             else:
                 quality_winner = f"Cerebras (+{abs(score_diff):.3f})"
             
@@ -1322,7 +1317,7 @@ def main():
             # Feedback summary
             print("\n💬 FEEDBACK:", file=sys.stderr)
             print(f"  • Cerebras: {cerebras_scores['feedback']}", file=sys.stderr)
-            print(f"  • Google: {google_scores['feedback']}", file=sys.stderr)
+            print(f"  • Anthropic: {anthropic_scores['feedback']}", file=sys.stderr)
             
             # Save comprehensive outputs to files
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1334,7 +1329,7 @@ def main():
             os.makedirs(output_base_dir, exist_ok=True)
             
             cerebras_file = os.path.join(output_base_dir, f"cerebras_output_{timestamp}.txt")
-            google_file = os.path.join(output_base_dir, f"google_output_{timestamp}.txt")
+            anthropic_file = os.path.join(output_base_dir, f"anthropic_output_{timestamp}.txt")
             
             try:
                 # Save Cerebras output with all details
@@ -1372,44 +1367,44 @@ def main():
                     f.write("="*95 + "\n\n")
                     f.write(cerebras_content)
                 
-                # Save Google output with all details
-                with open(google_file, 'w', encoding='utf-8') as f:
+                # Save Anthropic output with all details
+                with open(anthropic_file, 'w', encoding='utf-8') as f:
                     f.write("="*95 + "\n")
-                    f.write("GOOGLE CODE GENERATION OUTPUT\n")
+                    f.write("ANTHROPIC CODE GENERATION OUTPUT\n")
                     f.write("="*95 + "\n\n")
                     f.write(f"Prompt: {prompt}\n")
-                    f.write(f"Model: {args.google_model}\n")
+                    f.write(f"Model: {args.anthropic_model}\n")
                     f.write(f"Language: {args.language}\n")
                     f.write(f"Timestamp: {datetime.datetime.now().isoformat()}\n")
                     f.write("\n" + "="*95 + "\n")
                     f.write("PERFORMANCE METRICS\n")
                     f.write("="*95 + "\n")
-                    if google_perf:
-                        f.write(f"Time To First Token (TTFT):     {google_perf['ttft_seconds']*1000:.2f} ms\n")
-                        f.write(f"Latency Between Tokens:        {google_perf['token_latency_seconds']*1000:.2f} ms/token\n")
-                        f.write(f"Input Throughput:               {google_perf['input_throughput_tokens_per_sec']:.2f} tokens/sec\n")
-                        f.write(f"Output Throughput:              {google_perf['output_throughput_tokens_per_sec']:.2f} tokens/sec\n")
-                        f.write(f"Total Time:                     {google_perf['total_time_seconds']:.3f} seconds\n")
-                        f.write(f"Input Tokens:                   {google_perf['input_tokens']}\n")
-                        f.write(f"Output Tokens:                  {google_perf['output_tokens']}\n")
-                        f.write(f"Total Tokens:                   {google_perf['total_tokens']}\n")
+                    if anthropic_perf:
+                        f.write(f"Time To First Token (TTFT):     {anthropic_perf['ttft_seconds']*1000:.2f} ms\n")
+                        f.write(f"Latency Between Tokens:        {anthropic_perf['token_latency_seconds']*1000:.2f} ms/token\n")
+                        f.write(f"Input Throughput:               {anthropic_perf['input_throughput_tokens_per_sec']:.2f} tokens/sec\n")
+                        f.write(f"Output Throughput:              {anthropic_perf['output_throughput_tokens_per_sec']:.2f} tokens/sec\n")
+                        f.write(f"Total Time:                     {anthropic_perf['total_time_seconds']:.3f} seconds\n")
+                        f.write(f"Input Tokens:                   {anthropic_perf['input_tokens']}\n")
+                        f.write(f"Output Tokens:                  {anthropic_perf['output_tokens']}\n")
+                        f.write(f"Total Tokens:                   {anthropic_perf['total_tokens']}\n")
                     f.write("\n" + "="*95 + "\n")
                     f.write("CODE QUALITY SCORES\n")
                     f.write("="*95 + "\n")
-                    f.write(f"Correctness (0.30):  {google_scores['correctness']:.3f} × 0.30 = {google_scores['correctness'] * 0.30:.3f}\n")
-                    f.write(f"Code Quality (0.30): {google_scores['code_quality']:.3f} × 0.30 = {google_scores['code_quality'] * 0.30:.3f}\n")
-                    f.write(f"Efficiency (0.20):   {google_scores['efficiency']:.3f} × 0.20 = {google_scores['efficiency'] * 0.20:.3f}\n")
-                    f.write(f"Documentation (0.20): {google_scores['documentation']:.3f} × 0.20 = {google_scores['documentation'] * 0.20:.3f}\n")
-                    f.write(f"\nTOTAL SCORE: {google_scores['total_score']:.3f} / 1.000\n")
-                    f.write(f"\nFeedback: {google_scores['feedback']}\n")
+                    f.write(f"Correctness (0.30):  {anthropic_scores['correctness']:.3f} × 0.30 = {anthropic_scores['correctness'] * 0.30:.3f}\n")
+                    f.write(f"Code Quality (0.30): {anthropic_scores['code_quality']:.3f} × 0.30 = {anthropic_scores['code_quality'] * 0.30:.3f}\n")
+                    f.write(f"Efficiency (0.20):   {anthropic_scores['efficiency']:.3f} × 0.20 = {anthropic_scores['efficiency'] * 0.20:.3f}\n")
+                    f.write(f"Documentation (0.20): {anthropic_scores['documentation']:.3f} × 0.20 = {anthropic_scores['documentation'] * 0.20:.3f}\n")
+                    f.write(f"\nTOTAL SCORE: {anthropic_scores['total_score']:.3f} / 1.000\n")
+                    f.write(f"\nFeedback: {anthropic_scores['feedback']}\n")
                     f.write("\n" + "="*95 + "\n")
                     f.write("GENERATED CODE\n")
                     f.write("="*95 + "\n\n")
-                    f.write(google_content)
+                    f.write(anthropic_content)
                 
                 print(f"\n💾 OUTPUT FILES SAVED:", file=sys.stderr)
                 print(f"  • Cerebras: {cerebras_file}", file=sys.stderr)
-                print(f"  • Google: {google_file}", file=sys.stderr)
+                print(f"  • Anthropic: {anthropic_file}", file=sys.stderr)
                 print(f"\n📄 All details (performance, scores, code) have been saved to the files above.", file=sys.stderr)
             except Exception as e:
                 print(f"\n⚠️  Warning: Could not save output files: {e}", file=sys.stderr)
@@ -1421,10 +1416,10 @@ def main():
                         "scores": cerebras_scores,
                         "performance": cerebras_perf,
                     },
-                    "google": {
-                        "content": google_content,
-                        "scores": google_scores,
-                        "performance": google_perf,
+                    "anthropic": {
+                        "content": anthropic_content,
+                        "scores": anthropic_scores,
+                        "performance": anthropic_perf,
                     },
                 }
                 print("\n" + json.dumps(output_data, indent=2))
@@ -1488,17 +1483,17 @@ def main():
                 print("="*60, file=sys.stderr)
                 
                 try:
-                    # Use Google for scoring
-                    google_key = os.getenv("GOOGLE_API_KEY")
-                    if not google_key:
-                        print("Warning: GOOGLE_API_KEY not set, using Cerebras for scoring", file=sys.stderr)
+                    # Use Anthropic for scoring
+                    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                    if not anthropic_key:
+                        print("Warning: ANTHROPIC_API_KEY not set, using Cerebras for scoring", file=sys.stderr)
                         score_model = args.score_model or args.model
-                        use_google = False
+                        use_anthropic = False
                         score_api_key = api_key
                     else:
-                        score_model = args.google_model
-                        use_google = True
-                        score_api_key = google_key
+                        score_model = args.anthropic_model
+                        use_anthropic = True
+                        score_api_key = anthropic_key
                     
                     score_response, score_perf_metrics = score_code(
                         code=content,
@@ -1507,10 +1502,10 @@ def main():
                         model=score_model,
                         language=args.language,
                         track_timing=True,
-                        use_google=use_google,
+                        use_anthropic=use_anthropic,
                     )
                     
-                    scores = parse_score_response(score_response, is_google=use_google)
+                    scores = parse_score_response(score_response, is_anthropic=use_anthropic)
                     
                     # Display scores
                     print("\n📊 CODE SCORES:", file=sys.stderr)

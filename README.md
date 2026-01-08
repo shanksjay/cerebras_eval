@@ -295,6 +295,32 @@ Note: Cerebras model is Qwen 3 235B Instruct (qwen-3-235b-a22b-instruct-2507)
 Note: Anthropic model is Claude 3.5 Haiku (claude-3-5-haiku-20241022)
 ```
 
+### Scores Explained
+
+The scoring system evaluates generated code using a weighted rubric with four categories:
+
+- **Correctness (0.30 weight)**: Does the code correctly implement the requirements?
+  - Evaluates if the code solves the problem as specified
+  - Checks for bugs, edge case handling, and proper error handling
+  - Higher scores indicate code that works correctly and handles edge cases
+
+- **Code Quality (0.30 weight)**: Is the code clean, readable, and well-structured?
+  - Assesses code organization, readability, and maintainability
+  - Evaluates use of proper abstractions, design patterns, and modularity
+  - Higher scores indicate professional, maintainable code
+
+- **Efficiency (0.20 weight)**: Is the code efficient in terms of time and space complexity?
+  - Evaluates algorithm optimality and resource usage
+  - Checks for unnecessary computation or memory waste
+  - Higher scores indicate optimized, performant code
+
+- **Documentation (0.20 weight)**: Is the code well-documented?
+  - Assesses presence of docstrings, comments, and type hints
+  - Evaluates how self-documenting the code is
+  - Higher scores indicate code that is easy to understand and use
+
+**Total Score**: The final score is calculated as a weighted sum of all four categories, with a maximum value of 1.000. Each category is scored from 0.0 to 1.0, then multiplied by its weight and summed. For example, a score of 0.938 means the code received high marks across all categories, with the weighted average being 93.8% of the maximum possible score.
+
 ### Performance Metrics Explained
 
 The performance summary includes:

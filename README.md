@@ -262,6 +262,68 @@ Includes:
 - Quality winner identification
 - Feedback from both providers
 
+## Example Output
+
+### Batch Processing Summary
+
+When processing multiple prompts, the script displays a comprehensive summary with both code quality scores and performance metrics:
+
+```
+===============================================================================================
+📊 BATCH SUMMARY
+===============================================================================================
+Average Scores:
+  Cerebras:  0.938
+  Anthropic: 0.862
+  Winner: Cerebras
+
+Wins:
+  Cerebras:  4/4
+  Anthropic: 0/4
+
+===============================================================================================
+⚡ PERFORMANCE METRICS SUMMARY
+===============================================================================================
+Metric                              Cerebras Avg         Cerebras P99         Anthropic Avg        Anthropic P99       
+-----------------------------------------------------------------------------------------------
+TTFT (seconds)                      7.557                11.816               23.319               24.869              
+Input Throughput (tok/s)            12.97                24.08                3.66                 4.08                
+Output Throughput (tok/s)           581.57               1110.30              67.65                68.61               
+Inter-Token Latency (s)             0.0023               0.0039               0.0148               0.0153              
+```
+
+### Performance Metrics Explained
+
+The performance summary includes:
+
+- **TTFT (Time To First Token)**: How long it takes to receive the first token of the response
+  - Lower is better
+  - Shows both average and P99 (99th percentile) to understand tail latency
+
+- **Input Throughput**: Rate at which input tokens are processed (tokens/second)
+  - Higher is better
+  - Measures how efficiently the model processes the prompt
+
+- **Output Throughput**: Rate at which output tokens are generated (tokens/second)
+  - Higher is better
+  - Key metric for generation speed
+
+- **Inter-Token Latency**: Average time between consecutive output tokens (seconds)
+  - Lower is better
+  - Indicates generation smoothness and consistency
+
+**P99 Percentile**: The 99th percentile shows the worst-case performance, helping identify tail latency issues. For example, if P99 TTFT is much higher than average, it indicates occasional slow responses.
+
+### Interpretation
+
+In the example above:
+- **Cerebras** shows significantly better performance across all metrics:
+  - ~3x faster TTFT (7.6s vs 23.3s average)
+  - ~8.6x higher output throughput (581.6 vs 67.7 tokens/sec)
+  - ~6.4x lower inter-token latency (0.0023s vs 0.0148s)
+- **Code Quality**: Cerebras also achieved higher average scores (0.938 vs 0.862)
+- **Consistency**: P99 values show Cerebras maintains better performance even in worst-case scenarios
+
 ## License
 
 MIT

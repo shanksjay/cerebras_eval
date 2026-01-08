@@ -269,27 +269,23 @@ Includes:
 When processing multiple prompts, the script displays a comprehensive summary with both code quality scores and performance metrics:
 
 ```
-===============================================================================================
-📊 BATCH SUMMARY
-===============================================================================================
-Average Scores:
-  Cerebras (Qwen 3 235B Instruct):  0.938
-  Anthropic (Claude 3.5 Haiku):      0.862
-  Winner: Cerebras (Qwen 3 235B Instruct)
+=======================================================================================
+SCORE SUMMARY
+=======================================================================================
+Metric                          Cerebras (Qwen 3 235B)     Anthropic (Claude 3.5 Haiku)
+---------------------------------------------------------------------------------------
+Average Score                                 94.7 %                         89.5 %
+Wins                                      10/10 (100%)                        0/10 (0%)
+Winner                          Cerebras (Qwen 3 235B)
 
-Wins:
-  Cerebras (Qwen 3 235B Instruct):  4/4
-  Anthropic (Claude 3.5 Haiku):      0/4
-
-===============================================================================================
-⚡ PERFORMANCE METRICS SUMMARY
-===============================================================================================
-Metric                              Cerebras (Qwen 3 235B) Avg    Cerebras (Qwen 3 235B) P99    Anthropic (Claude 3.5 Haiku) Avg    Anthropic (Claude 3.5 Haiku) P99       
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-TTFT (seconds)                      7.557                         11.816                       23.319                             24.869              
-Input Throughput (tok/s)            12.97                         24.08                        3.66                               4.08                
-Output Throughput (tok/s)           581.57                        1110.30                       67.65                               68.61               
-Inter-Token Latency (s)             0.0023                        0.0039                        0.0148                             0.0153              
+PERFORMANCE METRICS SUMMARY
+=======================================================================================
+Metric                            Cerebras (Qwen 3 235B)   Anthropic (Claude 3.5 Haiku)
+---------------------------------------------------------------------------------------
+TTFT (seconds)                 4.631 (P99:  9.62)     23.680 (P99: 27.26)
+Input Throughput (tok/s)       20.06  (P99:  7.65)       3.48  (P99: 2.64)
+Output Throughput (tok/s)     829.58  (P99: 436.50)      69.00  (P99: 65.58)
+Inter-Token Latency (ms)         1.3   (P99: 2.3)       14.5   (P99:15.2)
 
 Note: Cerebras model is Qwen 3 235B Instruct (qwen-3-235b-a22b-instruct-2507)
 Note: Anthropic model is Claude 3.5 Haiku (claude-3-5-haiku-20241022)

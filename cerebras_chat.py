@@ -780,7 +780,7 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
             anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
             
-            # Calculate averages and P99
+            # Calculate averages and P99 (for latency) or P1 (for throughput)
             def calc_stats(values):
                 if not values:
                     return 0.0, 0.0
@@ -788,14 +788,22 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
                 p99 = calculate_percentile(values, 99.0)
                 return avg, p99
             
+            def calc_throughput_stats(values):
+                """Calculate stats for throughput metrics - use P1 (minimum) for worst-case."""
+                if not values:
+                    return 0.0, 0.0
+                avg = sum(values) / len(values)
+                p1 = calculate_percentile(values, 1.0)  # P1 = minimum/worst-case throughput
+                return avg, p1
+            
             c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
             a_ttft_avg, a_ttft_p99 = calc_stats(anthropic_ttft)
             
-            c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
-            a_input_tp_avg, a_input_tp_p99 = calc_stats(anthropic_input_throughput)
+            c_input_tp_avg, c_input_tp_p99 = calc_throughput_stats(cerebras_input_throughput)
+            a_input_tp_avg, a_input_tp_p99 = calc_throughput_stats(anthropic_input_throughput)
             
-            c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
-            a_output_tp_avg, a_output_tp_p99 = calc_stats(anthropic_output_throughput)
+            c_output_tp_avg, c_output_tp_p99 = calc_throughput_stats(cerebras_output_throughput)
+            a_output_tp_avg, a_output_tp_p99 = calc_throughput_stats(anthropic_output_throughput)
             
             c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
             a_latency_avg, a_latency_p99 = calc_stats(anthropic_token_latency)
@@ -827,7 +835,7 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             cerebras_token_latency = [r['cerebras']['performance']['token_latency_seconds'] for r in successful_results if r['cerebras']['performance']]
             anthropic_token_latency = [r['anthropic']['performance']['token_latency_seconds'] for r in successful_results if r['anthropic']['performance']]
             
-            # Calculate averages and P99
+            # Calculate averages and P99 (for latency) or P1 (for throughput)
             def calc_stats(values):
                 if not values:
                     return 0.0, 0.0
@@ -835,17 +843,25 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
                 p99 = calculate_percentile(values, 99.0)
                 return avg, p99
             
+            def calc_throughput_stats(values):
+                """Calculate stats for throughput metrics - use P1 (minimum) for worst-case."""
+                if not values:
+                    return 0.0, 0.0
+                avg = sum(values) / len(values)
+                p1 = calculate_percentile(values, 1.0)  # P1 = minimum/worst-case throughput
+                return avg, p1
+            
             c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
-        g_ttft_avg, g_ttft_p99 = calc_stats(anthropic_ttft)
-        
-        c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
-        g_input_tp_avg, g_input_tp_p99 = calc_stats(anthropic_input_throughput)
-        
-        c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
-        g_output_tp_avg, g_output_tp_p99 = calc_stats(anthropic_output_throughput)
-        
-        c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
-        g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
+            g_ttft_avg, g_ttft_p99 = calc_stats(anthropic_ttft)
+            
+            c_input_tp_avg, c_input_tp_p99 = calc_throughput_stats(cerebras_input_throughput)
+            g_input_tp_avg, g_input_tp_p99 = calc_throughput_stats(anthropic_input_throughput)
+            
+            c_output_tp_avg, c_output_tp_p99 = calc_throughput_stats(cerebras_output_throughput)
+            g_output_tp_avg, g_output_tp_p99 = calc_throughput_stats(anthropic_output_throughput)
+            
+            c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
+            g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
         
         f.write("PERFORMANCE METRICS SUMMARY\n")
         f.write("="*87 + "\n")
@@ -951,14 +967,22 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             p99 = calculate_percentile(values, 99.0)
             return avg, p99
         
+        def calc_throughput_stats(values):
+            """Calculate stats for throughput metrics - use P1 (minimum) for worst-case."""
+            if not values:
+                return 0.0, 0.0
+            avg = sum(values) / len(values)
+            p1 = calculate_percentile(values, 1.0)  # P1 = minimum/worst-case throughput
+            return avg, p1
+        
         c_ttft_avg, c_ttft_p99 = calc_stats(cerebras_ttft)
         a_ttft_avg, a_ttft_p99 = calc_stats(anthropic_ttft)
         
-        c_input_tp_avg, c_input_tp_p99 = calc_stats(cerebras_input_throughput)
-        a_input_tp_avg, a_input_tp_p99 = calc_stats(anthropic_input_throughput)
+        c_input_tp_avg, c_input_tp_p99 = calc_throughput_stats(cerebras_input_throughput)
+        a_input_tp_avg, a_input_tp_p99 = calc_throughput_stats(anthropic_input_throughput)
         
-        c_output_tp_avg, c_output_tp_p99 = calc_stats(cerebras_output_throughput)
-        a_output_tp_avg, a_output_tp_p99 = calc_stats(anthropic_output_throughput)
+        c_output_tp_avg, c_output_tp_p99 = calc_throughput_stats(cerebras_output_throughput)
+        a_output_tp_avg, a_output_tp_p99 = calc_throughput_stats(anthropic_output_throughput)
         
         c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
         a_latency_avg, a_latency_p99 = calc_stats(anthropic_token_latency)

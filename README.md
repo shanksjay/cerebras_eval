@@ -12,8 +12,24 @@ A command-line interface for calling the Cerebras OpenAI-compatible chat API wit
 
 ## Installation
 
+This project uses [UV](https://github.com/astral-sh/uv) for package management. Install UV first:
+
 ```bash
-pip install requests
+# Install UV (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then initialize the project and install dependencies:
+
+```bash
+# Initialize the project with UV
+uv init
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Install dependencies (UV will automatically install from requirements.txt)
+uv sync
 ```
 
 ## Setup
@@ -34,15 +50,17 @@ By default, the script:
 
 To disable these defaults:
 ```bash
-python cerebras_chat.py "prompt" --no-compare --no-score
+uv run python cerebras_chat.py "prompt" --no-compare --no-score
 ```
 
 ## Usage
 
+All examples below assume you have activated the virtual environment (`source .venv/bin/activate`) or are using `uv run`:
+
 ### Basic Usage (Single Prompt)
 
 ```bash
-python cerebras_chat.py "Implement LRU cache in Python"
+uv run python cerebras_chat.py "Implement LRU cache in Python"
 ```
 
 This will automatically:
@@ -54,30 +72,35 @@ This will automatically:
 ### With Custom Model and Temperature
 
 ```bash
-python cerebras_chat.py "Write a function" --model qwen-3-235b-a22b-instruct-2507 --temperature 0.7
+uv run python cerebras_chat.py "Write a function" --model qwen-3-235b-a22b-instruct-2507 --temperature 0.7
 ```
 
 ### With System Message
 
 ```bash
-python cerebras_chat.py "Hello!" --system "You are a helpful coding assistant"
+uv run python cerebras_chat.py "Hello!" --system "You are a helpful coding assistant"
 ```
 
 ### Read from Stdin
 
 ```bash
-echo "What is Python?" | python cerebras_chat.py
+echo "What is Python?" | uv run python cerebras_chat.py
 ```
 
 ### Get Full JSON Response
 
 ```bash
-python cerebras_chat.py "Hello!" --json
+uv run python cerebras_chat.py "Hello!" --json
 ```
 
 ### Batch Processing from JSON/JSONL File
 
 ```bash
+# Using UV (recommended)
+uv run python cerebras_chat.py --input-file eval.jsonl
+
+# Or with activated virtual environment
+source .venv/bin/activate
 python cerebras_chat.py --input-file eval.jsonl
 ```
 

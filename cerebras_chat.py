@@ -438,26 +438,48 @@ def parse_score_response(response: Any, is_anthropic: bool = True) -> Dict[str, 
         cleaned_content = clean_json_response(content)
         
         # Try to extract JSON from the response
-        # Look for JSON object in the response (handle multiline JSON)
-        json_match = re.search(r'\{.*?"correctness".*?\}', cleaned_content, re.DOTALL)
-        if json_match:
-            try:
-                score_data = json.loads(json_match.group())
-                return {
-                    "correctness": float(score_data.get("correctness", 0.0)),
-                    "code_quality": float(score_data.get("code_quality", 0.0)),
-                    "efficiency": float(score_data.get("efficiency", 0.0)),
-                    "documentation": float(score_data.get("documentation", 0.0)),
-                    "total_score": float(score_data.get("total_score", 0.0)),
-                    "feedback": score_data.get("feedback", "No feedback provided"),
-                }
-            except json.JSONDecodeError:
-                # If the matched JSON is incomplete, try parsing the cleaned content directly
-                pass
+        # First, try to find the JSON object start
+        json_start = cleaned_content.find('{')
+        if json_start == -1:
+            raise json.JSONDecodeError("No JSON object found", cleaned_content, 0)
         
-        # Fallback: try to parse the entire cleaned content as JSON
+        # Try to find the end of the JSON object by counting braces
+        # This handles multiline JSON and incomplete feedback fields
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        json_end = json_start
+        
+        for i in range(json_start, len(cleaned_content)):
+            char = cleaned_content[i]
+            
+            if escape_next:
+                escape_next = False
+                continue
+            
+            if char == '\\':
+                escape_next = True
+                continue
+            
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            
+            if not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_end = i + 1
+                        break
+        
+        # Extract the JSON substring
+        json_str = cleaned_content[json_start:json_end] if json_end > json_start else cleaned_content[json_start:]
+        
+        # Try to parse the extracted JSON
         try:
-            score_data = json.loads(cleaned_content)
+            score_data = json.loads(json_str)
             return {
                 "correctness": float(score_data.get("correctness", 0.0)),
                 "code_quality": float(score_data.get("code_quality", 0.0)),
@@ -467,27 +489,32 @@ def parse_score_response(response: Any, is_anthropic: bool = True) -> Dict[str, 
                 "feedback": score_data.get("feedback", "No feedback provided"),
             }
         except json.JSONDecodeError:
-            # Try to find and parse just the JSON part more aggressively
-            # Look for JSON that might span multiple lines
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            json_matches = re.findall(json_pattern, cleaned_content, re.DOTALL)
-            for match in json_matches:
-                try:
-                    score_data = json.loads(match)
-                    if "correctness" in score_data:
-                        return {
-                            "correctness": float(score_data.get("correctness", 0.0)),
-                            "code_quality": float(score_data.get("code_quality", 0.0)),
-                            "efficiency": float(score_data.get("efficiency", 0.0)),
-                            "documentation": float(score_data.get("documentation", 0.0)),
-                            "total_score": float(score_data.get("total_score", 0.0)),
-                            "feedback": score_data.get("feedback", "No feedback provided"),
-                        }
-                except json.JSONDecodeError:
-                    continue
+            # If JSON is incomplete, try to extract just the numeric fields
+            # Use regex to extract key-value pairs
+            correctness_match = re.search(r'"correctness"\s*:\s*([0-9.]+)', cleaned_content)
+            code_quality_match = re.search(r'"code_quality"\s*:\s*([0-9.]+)', cleaned_content)
+            efficiency_match = re.search(r'"efficiency"\s*:\s*([0-9.]+)', cleaned_content)
+            documentation_match = re.search(r'"documentation"\s*:\s*([0-9.]+)', cleaned_content)
+            total_score_match = re.search(r'"total_score"\s*:\s*([0-9.]+)', cleaned_content)
             
-            # If all parsing attempts fail, raise the error
-            raise json.JSONDecodeError("Could not parse JSON from response", cleaned_content, 0)
+            # Extract feedback - try to get text after "feedback": until the end or next field
+            feedback_match = re.search(r'"feedback"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', cleaned_content, re.DOTALL)
+            if not feedback_match:
+                # Try to get feedback even if it's incomplete (not closed)
+                feedback_match = re.search(r'"feedback"\s*:\s*"(.*?)(?:"\s*[,}]|$)', cleaned_content, re.DOTALL)
+            
+            feedback = feedback_match.group(1) if feedback_match else "No feedback provided"
+            # Unescape JSON string escapes
+            feedback = feedback.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t')
+            
+            return {
+                "correctness": float(correctness_match.group(1)) if correctness_match else 0.0,
+                "code_quality": float(code_quality_match.group(1)) if code_quality_match else 0.0,
+                "efficiency": float(efficiency_match.group(1)) if efficiency_match else 0.0,
+                "documentation": float(documentation_match.group(1)) if documentation_match else 0.0,
+                "total_score": float(total_score_match.group(1)) if total_score_match else 0.0,
+                "feedback": feedback,
+            }
             
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Warning: Could not parse score response: {e}", file=sys.stderr)
@@ -703,6 +730,10 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             cerebras_avg_score = sum(cerebras_scores) / len(cerebras_scores)
             anthropic_avg_score = sum(anthropic_scores) / len(anthropic_scores)
             
+            # Count winners
+            cerebras_wins_score = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
+            anthropic_wins_score = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
+            
             # Performance averages
             cerebras_total_times = [r['cerebras']['performance']['total_time_seconds'] for r in successful_results if r['cerebras']['performance']]
             anthropic_total_times = [r['anthropic']['performance']['total_time_seconds'] for r in successful_results if r['anthropic']['performance']]
@@ -716,10 +747,24 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
             cerebras_avg_throughput = sum(cerebras_output_throughputs) / len(cerebras_output_throughputs) if cerebras_output_throughputs else 0
             anthropic_avg_throughput = sum(anthropic_output_throughputs) / len(anthropic_output_throughputs) if anthropic_output_throughputs else 0
             
-            f.write("AVERAGE CODE QUALITY SCORES:\n")
-            f.write(f"  Cerebras:  {cerebras_avg_score:.3f} / 1.000\n")
-            f.write(f"  Anthropic: {anthropic_avg_score:.3f} / 1.000\n")
-            f.write(f"  Winner: {'Cerebras' if cerebras_avg_score > anthropic_avg_score else 'Anthropic' if anthropic_avg_score > cerebras_avg_score else 'Tie'}\n")
+            f.write("="*87 + "\n")
+            f.write("SCORE SUMMARY\n")
+            f.write("="*87 + "\n")
+            f.write(f"{'Metric':<21} {'Cerebras (Qwen 3 235B)':>32} {'Anthropic (Claude 3.5 Haiku)':>32}\n")
+            f.write("-"*87 + "\n")
+            f.write(f"{'Average Score':<21} {cerebras_avg_score*100:>28.1f} % {anthropic_avg_score*100:>28.1f} %\n")
+            cerebras_wins_pct = 100 * cerebras_wins_score / len(successful_results)
+            anthropic_wins_pct = 100 * anthropic_wins_score / len(successful_results)
+            cerebras_wins_str = f"{cerebras_wins_score}/{len(successful_results)} ({cerebras_wins_pct:.0f}%)"
+            anthropic_wins_str = f"{anthropic_wins_score}/{len(successful_results)} ({anthropic_wins_pct:.0f}%)"
+            f.write(f"{'Wins':<21} {cerebras_wins_str:>32} {anthropic_wins_str:>32}\n")
+            if cerebras_avg_score > anthropic_avg_score:
+                winner = 'Cerebras (Qwen 3 235B)'
+            elif anthropic_avg_score > cerebras_avg_score:
+                winner = 'Anthropic (Claude 3.5 Haiku)'
+            else:
+                winner = 'Tie'
+            f.write(f"{'Winner':<21} {winner:>32}\n")
             f.write("\n")
             
             # Collect performance metrics for detailed analysis
@@ -802,14 +847,14 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
         g_latency_avg, g_latency_p99 = calc_stats(anthropic_token_latency)
         
-        f.write("PERFORMANCE METRICS SUMMARY:\n")
-        f.write("="*95 + "\n")
-        f.write(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}\n")
-        f.write("-"*95 + "\n")
-        f.write(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {g_ttft_avg:<20.3f} {g_ttft_p99:<20.3f}\n")
-        f.write(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {g_input_tp_avg:<20.2f} {g_input_tp_p99:<20.2f}\n")
-        f.write(f"{'Output Throughput (tok/s)':<35} {c_output_tp_avg:<20.2f} {c_output_tp_p99:<20.2f} {g_output_tp_avg:<20.2f} {g_output_tp_p99:<20.2f}\n")
-        f.write(f"{'Inter-Token Latency (s)':<35} {c_latency_avg:<20.4f} {c_latency_p99:<20.4f} {g_latency_avg:<20.4f} {g_latency_p99:<20.4f}\n")
+        f.write("PERFORMANCE METRICS SUMMARY\n")
+        f.write("="*87 + "\n")
+        f.write(f"{'Metric':<25} {'Cerebras (Qwen 3 235B)':>30} {'Anthropic (Claude 3.5 Haiku)':>30}\n")
+        f.write("-"*87 + "\n")
+        f.write(f"{'TTFT (seconds)':<25} {c_ttft_avg:>10.3f} (P99:{c_ttft_p99:>6.2f}) {g_ttft_avg:>10.3f} (P99:{g_ttft_p99:>6.2f})\n")
+        f.write(f"{'Input Throughput (tok/s)':<25} {c_input_tp_avg:>10.2f}  (P99:{c_input_tp_p99:>6.2f}) {g_input_tp_avg:>10.2f}  (P99:{g_input_tp_p99:>5.2f})\n")
+        f.write(f"{'Output Throughput (tok/s)':<25} {c_output_tp_avg:>10.2f}  (P99:{c_output_tp_p99:>7.2f}) {g_output_tp_avg:>10.2f}  (P99:{g_output_tp_p99:>6.2f})\n")
+        f.write(f"{'Inter-Token Latency (ms)':<25} {c_latency_avg*1000:>10.1f}   (P99:{c_latency_p99*1000:>4.1f}) {g_latency_avg*1000:>10.1f}   (P99:{g_latency_p99*1000:>4.1f})\n")
         f.write("\n")
         
         f.write("LEGACY PERFORMANCE METRICS (for reference):\n")
@@ -863,16 +908,28 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         cerebras_avg = sum(cerebras_scores) / len(cerebras_scores)
         anthropic_avg = sum(anthropic_scores) / len(anthropic_scores)
         
-        print(f"Average Scores:", file=sys.stderr)
-        print(f"  Cerebras:  {cerebras_avg:.3f}", file=sys.stderr)
-        print(f"  Anthropic: {anthropic_avg:.3f}", file=sys.stderr)
-        print(f"  Winner: {'Cerebras' if cerebras_avg > anthropic_avg else 'Anthropic' if anthropic_avg > cerebras_avg else 'Tie'}", file=sys.stderr)
-        
         cerebras_wins = sum(1 for r in successful_results if r['cerebras']['score'] > r['anthropic']['score'])
         anthropic_wins = sum(1 for r in successful_results if r['anthropic']['score'] > r['cerebras']['score'])
-        print(f"\nWins:", file=sys.stderr)
-        print(f"  Cerebras:  {cerebras_wins}/{len(successful_results)}", file=sys.stderr)
-        print(f"  Anthropic: {anthropic_wins}/{len(successful_results)}", file=sys.stderr)
+        ties = len(successful_results) - cerebras_wins - anthropic_wins
+        
+        print(f"\n{'='*87}", file=sys.stderr)
+        print("SCORE SUMMARY", file=sys.stderr)
+        print(f"{'='*87}", file=sys.stderr)
+        print(f"{'Metric':<21} {'Cerebras (Qwen 3 235B)':>32} {'Anthropic (Claude 3.5 Haiku)':>32}", file=sys.stderr)
+        print("-"*87, file=sys.stderr)
+        print(f"{'Average Score':<21} {cerebras_avg*100:>28.1f} % {anthropic_avg*100:>28.1f} %", file=sys.stderr)
+        cerebras_wins_pct = 100 * cerebras_wins / len(successful_results)
+        anthropic_wins_pct = 100 * anthropic_wins / len(successful_results)
+        cerebras_wins_str = f"{cerebras_wins}/{len(successful_results)} ({cerebras_wins_pct:.0f}%)"
+        anthropic_wins_str = f"{anthropic_wins}/{len(successful_results)} ({anthropic_wins_pct:.0f}%)"
+        print(f"{'Wins':<21} {cerebras_wins_str:>32} {anthropic_wins_str:>32}", file=sys.stderr)
+        if cerebras_avg > anthropic_avg:
+            winner = 'Cerebras (Qwen 3 235B)'
+        elif anthropic_avg > cerebras_avg:
+            winner = 'Anthropic (Claude 3.5 Haiku)'
+        else:
+            winner = 'Tie'
+        print(f"{'Winner':<21} {winner:>32}", file=sys.stderr)
         
         # Performance metrics summary
         cerebras_ttft = [r['cerebras']['performance']['ttft_seconds'] for r in successful_results if r['cerebras']['performance']]
@@ -906,15 +963,14 @@ def generate_batch_summary(results: List[Dict[str, Any]], output_dir: str, times
         c_latency_avg, c_latency_p99 = calc_stats(cerebras_token_latency)
         a_latency_avg, a_latency_p99 = calc_stats(anthropic_token_latency)
         
-        print(f"\n{'='*95}", file=sys.stderr)
-        print("⚡ PERFORMANCE METRICS SUMMARY", file=sys.stderr)
-        print(f"{'='*95}", file=sys.stderr)
-        print(f"{'Metric':<35} {'Cerebras Avg':<20} {'Cerebras P99':<20} {'Anthropic Avg':<20} {'Anthropic P99':<20}", file=sys.stderr)
-        print("-"*95, file=sys.stderr)
-        print(f"{'TTFT (seconds)':<35} {c_ttft_avg:<20.3f} {c_ttft_p99:<20.3f} {a_ttft_avg:<20.3f} {a_ttft_p99:<20.3f}", file=sys.stderr)
-        print(f"{'Input Throughput (tok/s)':<35} {c_input_tp_avg:<20.2f} {c_input_tp_p99:<20.2f} {a_input_tp_avg:<20.2f} {a_input_tp_p99:<20.2f}", file=sys.stderr)
-        print(f"{'Output Throughput (tok/s)':<35} {c_output_tp_avg:<20.2f} {c_output_tp_p99:<20.2f} {a_output_tp_avg:<20.2f} {a_output_tp_p99:<20.2f}", file=sys.stderr)
-        print(f"{'Inter-Token Latency (s)':<35} {c_latency_avg:<20.4f} {c_latency_p99:<20.4f} {a_latency_avg:<20.4f} {a_latency_p99:<20.4f}", file=sys.stderr)
+        print(f"\nPERFORMANCE METRICS SUMMARY", file=sys.stderr)
+        print(f"{'='*87}", file=sys.stderr)
+        print(f"{'Metric':<25} {'Cerebras (Qwen 3 235B)':>30} {'Anthropic (Claude 3.5 Haiku)':>30}", file=sys.stderr)
+        print("-"*87, file=sys.stderr)
+        print(f"{'TTFT (seconds)':<25} {c_ttft_avg:>10.3f} (P99:{c_ttft_p99:>6.2f}) {g_ttft_avg:>10.3f} (P99:{g_ttft_p99:>6.2f})", file=sys.stderr)
+        print(f"{'Input Throughput (tok/s)':<25} {c_input_tp_avg:>10.2f}  (P99:{c_input_tp_p99:>6.2f}) {g_input_tp_avg:>10.2f}  (P99:{g_input_tp_p99:>5.2f})", file=sys.stderr)
+        print(f"{'Output Throughput (tok/s)':<25} {c_output_tp_avg:>10.2f}  (P99:{c_output_tp_p99:>7.2f}) {g_output_tp_avg:>10.2f}  (P99:{g_output_tp_p99:>6.2f})", file=sys.stderr)
+        print(f"{'Inter-Token Latency (ms)':<25} {c_latency_avg*1000:>10.1f}   (P99:{c_latency_p99*1000:>4.1f}) {g_latency_avg*1000:>10.1f}   (P99:{g_latency_p99*1000:>4.1f})", file=sys.stderr)
 
 
 def main():

@@ -297,18 +297,18 @@ SCORE SUMMARY
 =======================================================================================
 Metric                          Cerebras (Qwen 3 235B)     Anthropic (Claude 3.5 Haiku)
 ---------------------------------------------------------------------------------------
-Average Score                                 94.7 %                         89.5 %
-Wins                                      10/10 (100%)                        0/10 (0%)
+Average Score                                 93.7 %                         89.1 %
+Wins                                      90/100 (90%)                       6/100 (6%)
 Winner                          Cerebras (Qwen 3 235B)
 
 PERFORMANCE METRICS SUMMARY
 =======================================================================================
 Metric                            Cerebras (Qwen 3 235B)   Anthropic (Claude 3.5 Haiku)
 ---------------------------------------------------------------------------------------
-TTFT (seconds)                 4.631 (P99:  9.62)     23.680 (P99: 27.26)
-Input Throughput (tok/s)       20.06  (P99:  7.65)       3.48  (P99: 2.64)
-Output Throughput (tok/s)     829.58  (P99: 436.50)      69.00  (P99: 65.58)
-Inter-Token Latency (ms)         1.3   (P99: 2.3)       14.5   (P99:15.2)
+TTFT (seconds)                 3.487 (P99: 10.21)     24.367 (P99: 34.23)
+Input Throughput (tok/s)       24.27  (P99:  7.64)       3.45  (P99: 2.35)
+Output Throughput (tok/s)    1086.97  (P99: 591.13)      69.12  (P99: 62.67)
+Inter-Token Latency (ms)         1.0   (P99: 1.7)       14.5   (P99:16.0)
 
 Note: Cerebras model is Qwen 3 235B Instruct (qwen-3-235b-a22b-instruct-2507)
 Note: Anthropic model is Claude 3.5 Haiku (claude-3-5-haiku-20241022)
@@ -366,12 +366,12 @@ The performance summary includes:
 
 In the example above:
 - **Cerebras (Qwen 3 235B)** shows significantly better performance across all metrics:
-  - ~5.1x faster TTFT (4.6s vs 23.7s average) compared to Anthropic (Claude 3.5 Haiku)
-  - ~12x higher output throughput (829.6 vs 69.0 tokens/sec)
-  - ~11x lower inter-token latency (1.3ms vs 14.5ms)
-  - ~5.8x higher input throughput (20.1 vs 3.5 tokens/sec)
-- **Code Quality**: Cerebras (Qwen 3 235B) also achieved higher average scores (94.7% vs 89.5%) and won all 10 comparisons
-- **Consistency**: P99 values show Cerebras (Qwen 3 235B) maintains better performance even in worst-case scenarios, with P99 TTFT of 9.6s vs Anthropic's 27.3s
+  - ~7x faster TTFT (3.5s vs 24.4s average) compared to Anthropic (Claude 3.5 Haiku)
+  - ~15.7x higher output throughput (1087.0 vs 69.1 tokens/sec)
+  - ~14.5x lower inter-token latency (1.0ms vs 14.5ms)
+  - ~7x higher input throughput (24.3 vs 3.5 tokens/sec)
+- **Code Quality**: Cerebras (Qwen 3 235B) achieved higher average scores (93.7% vs 89.1%) and won 90 out of 100 comparisons (90% win rate)
+- **Consistency**: P99 values show Cerebras (Qwen 3 235B) maintains better performance even in worst-case scenarios, with P99 TTFT of 10.2s vs Anthropic's 34.2s
 
 ## License
 
